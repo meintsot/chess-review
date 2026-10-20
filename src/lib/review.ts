@@ -1,7 +1,7 @@
 import { Chess, type Move, type PieceSymbol, type Square } from 'chess.js'
 import { EnginePool, type EngineResult, type RawScore } from './engine'
-import { estimateRating, meanAccuracy, moveAccuracy } from './accuracy'
-import { expectedPoints, fromLichessScale, toLichessScale, type RatingSource } from './expectedPoints'
+import { estimateRating, gameAccuracy, moveAccuracy, speedOf } from './accuracy'
+import { accuracySlope, expectedPoints, fromChessComScale, labelSlope, toChessComScale, type RatingSource } from './expectedPoints'
 import { isSafe, other, sacrificedPieces, VALUE, type Piece } from './safety'
 import { formatScore, toWhitePov, type Score } from './score'
 
@@ -120,8 +120,8 @@ export async function reviewGame(
   const site = (headers.Site ?? '').toLowerCase()
   const source: RatingSource = site.includes('chess.com') ? 'chess.com' : site.includes('lichess') ? 'lichess' : 'other'
   const rating = {
-    w: toLichessScale(Number(headers.WhiteElo), source),
-    b: toLichessScale(Number(headers.BlackElo), source),
+    w: toChessComScale(Number(headers.WhiteElo), source),
+    b: toChessComScale(Number(headers.BlackElo), source),
   }
 
   // Engine: every position from the start through the final one.
@@ -157,7 +157,8 @@ export async function reviewGame(
     const m = history[i]
     const mover = m.color
     const R = rating[mover]
-    const ep = (s: Score) => expectedPoints(s, mover, R)
+    const ep = (s: Score) => expectedPoints(s, mover, labelSlope(R))
+    const epAcc = (s: Score) => expectedPoints(s, mover, accuracySlope(R))
     const before = new Chess(m.before)
     const after = new Chess(m.after)
     const res = results[i]
@@ -175,6 +176,7 @@ export async function reviewGame(
     const epBefore = ep(scoreTop)
     const epAfter = isBest ? epBefore : ep(scorePlayed)
     const loss = Math.max(0, epBefore - epAfter)
+    const accLoss = played === bestUci ? 0 : Math.max(0, epAcc(scoreTop) - epAcc(scorePlayed))
 
     const opening = book[bookKey(m.after)]
     inBook = inBook && opening !== undefined
@@ -182,7 +184,7 @@ export async function reviewGame(
     let cls: Classification
     if (before.moves().length === 1) cls = 'forced'
     else if (inBook) cls = 'book'
-    else if (after.isCheckmate() || isBest) cls = 'best'
+    else if (after.isCheckmate() || isBest || loss <= BEST_EPSILON) cls = 'best'
     else cls = pointLossClass(subjective(scoreTop, mover), subjective(scorePlayed, mover), loss)
 
     // Shared gate for Great and Brilliant (chess.com: not when completely winning anyway, not when
@@ -193,7 +195,7 @@ export async function reviewGame(
     const candidate = !inBook && cls !== 'forced' && !after.isCheckmate() && !winningAnyway && curSubj.value >= 0 && !before.inCheck()
 
     let sacrificed: Piece[] = []
-    const generous = R < 1500 // chess.com is more generous with Brilliant/Great for newer players
+    const generous = R < 1100 // chess.com is more generous with Brilliant/Great for newer players
     const nearBest = isBest || loss < (generous ? 0.02 : 0.01)
     if (candidate && nearBest && !m.promotion) sacrificed = sacrificedPieces(before, after, m)
     if (sacrificed.length) {
@@ -208,10 +210,14 @@ export async function reviewGame(
 
     // Miss: the opponent just erred and this move let the chance slip (without losing more than that).
     const prevReview = moves[i - 1]
-    // Judged on raw expected points so that, e.g., missing a mate for a still-winning move counts.
-    if (prevReview && ['mistake', 'blunder', 'miss'].includes(prevReview.cls) && !isBest && !['brilliant', 'great', 'forced', 'book'].includes(cls) && loss >= 0.05) {
+    // Judged on expected points rather than the label, so the opponent's error counts from ~0.08 lost and
+    // missing a forced mate counts even when the move played still wins.
+    // chess.com: a Miss is failing to take a *winning* chance the opponent offered.
+    if (prevReview && prevReview.cls !== 'miss' && prevReview.loss >= 0.06 && !['best', 'brilliant', 'great', 'forced', 'book'].includes(cls)) {
       const beforeTheirError = ep(scores[i - 1])
-      if (epBefore - beforeTheirError >= 0.1 && epAfter <= beforeTheirError + 0.05 && epAfter >= beforeTheirError - 0.15) cls = 'miss'
+      const missedMate = (subjective(scoreTop, mover).mate ?? 0) > 0 && !((curSubj.mate ?? 0) > 0)
+      const gaveBack = loss >= 0.05 && epAfter <= beforeTheirError + 0.05 && epAfter >= beforeTheirError - 0.15
+      if (epBefore >= 0.65 && epBefore - beforeTheirError >= 0.1 && (missedMate || gaveBack)) cls = 'miss'
     }
 
     const bestLineSan = res ? sanLine(m.before, res.lines[0]?.pv ?? []) : []
@@ -236,7 +242,7 @@ export async function reviewGame(
       winBefore: epBefore * 100,
       winAfter: epAfter * 100,
       loss,
-      accuracy: moveAccuracy(epBefore * 100, epAfter * 100),
+      accuracy: moveAccuracy(accLoss),
       cls,
       opening: opening || undefined,
       comment: '',
@@ -245,8 +251,10 @@ export async function reviewGame(
     moves.push(review)
   }
 
+  const accuracy = { w: gameAccuracy(moves, 'w'), b: gameAccuracy(moves, 'b') }
+  const speed = speedOf(headers.TimeControl)
   const est = (c: 'w' | 'b', elo?: string) =>
-    Math.round(fromLichessScale(estimateRating(scores, c, startFen.split(' ')[1] === 'w', elo ? rating[c] : undefined), source) / 50) * 50
+    Math.round(fromChessComScale(estimateRating(accuracy[c], speed, elo ? rating[c] : undefined), source) / 50) * 50
   const openingName = [...moves].reverse().find(m => m.opening)?.opening ?? headers.Opening
   return {
     white: headers.White ?? 'White',
@@ -258,7 +266,7 @@ export async function reviewGame(
     opening: openingName,
     moves,
     startScore: scores[0],
-    accuracy: { w: meanAccuracy(moves, 'w'), b: meanAccuracy(moves, 'b') },
+    accuracy,
     gameRating: { w: est('w', headers.WhiteElo), b: est('b', headers.BlackElo) },
     depth,
   }
@@ -312,9 +320,12 @@ function lossClass(loss: number): Classification {
   return 'blunder'
 }
 
+// chess.com's table says Best is 0.00 loss; in its reviews moves that lose ~nothing also get Best.
+const BEST_EPSILON = 0.002
+
 /** How much worse the next-best move must be for "only move" (Great); lower for newer players. */
-function greatThreshold(lichessRating: number) {
-  const t = (lichessRating - 1200) / 600
+function greatThreshold(rating: number) {
+  const t = (rating - 750) / 800
   return 0.08 + 0.02 * Math.max(0, Math.min(1, t))
 }
 
