@@ -41,6 +41,22 @@ describe('coach', () => {
     }
   })
 
+  it('speaks to the player: no raw colour names, no control characters, opponent moments retold', () => {
+    for (const r of reviews) {
+      r.moves.forEach((m, i) => {
+        const note = coachMove(r, i)
+        for (const t of [...note.tactical, ...note.strategic]) {
+          expect(t).not.toMatch(/[\x00-\x08]/)
+          expect(t).not.toMatch(m.color === 'w' ? /\bWhite's\b/ : /\bBlack's\b/)
+        }
+      })
+      const rep = coachGame(r, 'w')
+      for (const mo of rep.moments) {
+        if (!mo.text.includes('(You)')) expect(mo.text).not.toMatch(/your opponent has/)
+      }
+    }
+  })
+
   it('builds a game report from the player\'s side', () => {
     for (const r of reviews) {
       for (const side of ['w', 'b'] as const) {

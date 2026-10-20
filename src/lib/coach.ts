@@ -433,9 +433,11 @@ export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameRepo
     .sort((a, b) => a.ply - b.ply)
     .map(m => {
       const note = coachMove(review, m.ply - 1)
-      const who = m.color === player ? 'You' : opp
+      const mineMove = m.color === player
       const detail = note.tactical[0] ?? note.strategic[0] ?? ''
-      return { ply: m.ply, text: `${moveNo(m)} ${m.san} (${who}) — ${note.headline} ${detail}`.trim() }
+      // Notes are written to the mover; for the opponent's moves, retell them from the player's side.
+      const text = mineMove ? `${note.headline} ${detail}` : opponentView(m.cls, detail)
+      return { ply: m.ply, text: `${moveNo(m)} ${m.san} (${mineMove ? 'You' : opp}) — ${text}`.trim() }
     })
 
   // Strengths
@@ -468,6 +470,21 @@ export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameRepo
     (improve.length ? `The biggest lesson from this game: ${(lessonById(improve[0].lesson)?.title ?? improve[0].lesson).toLowerCase()}.` : 'A clean game — keep it up.')
 
   return { overview, phases, structures, moments, strengths, improve }
+}
+
+/** Retell a coach note about the opponent's move from the player's point of view. */
+function opponentView(cls: Classification, detail: string): string {
+  const head: Partial<Record<Classification, string>> = {
+    blunder: 'Your opponent blundered.', mistake: 'Your opponent went wrong.', miss: 'Your opponent missed a chance.',
+    brilliant: 'Your opponent found a brilliant idea.', great: 'Your opponent found the only good move.',
+  }
+  const body = detail
+    .replace(/^After (\S+), your opponent has /, 'After $1, you had ')
+    .replace(/^You had a winning shot/, 'They had a winning shot')
+    .replace(/^There was a tactic/, 'They had a tactic')
+    .replace(/\byour opponent's\b/g, 'your')
+    .replace(/\byour\b(?! opponent)/g, 'their')
+  return `${head[cls] ?? ''} ${body}`.trim()
 }
 
 export const moveNo = (m: MoveReview) => `${Math.ceil(m.ply / 2)}${m.color === 'w' ? '.' : '…'}`

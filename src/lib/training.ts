@@ -90,7 +90,7 @@ export type Exercise =
   | { kind: 'choice'; id: string; fen: string; answers: [string, number][]; rating: number; lesson?: string; title: string; note?: string; engineCheck?: boolean }
 
 type PuzzleRow = [string, string, string, number, string]
-interface StrategicRow { id: string; theme?: string; structure?: string; fen: string; answers: [string, number][]; difficulty: number; structures?: string[] }
+interface StrategicRow { id: string; theme?: string; structure?: string; fen: string; answers: [string, number][]; difficulty: number | null; structures?: string[] }
 
 const cache = new Map<string, Promise<unknown>>()
 function load<T>(path: string): Promise<T> {
@@ -113,7 +113,15 @@ function shuffle<T>(xs: T[], seed = Date.now()): T[] {
   return a
 }
 
-const near = (rating: number, target: number, width: number) => Math.abs(rating - target) <= width
+const near = (rating: number | null, target: number, width: number) => Math.abs((rating ?? 1500) - target) <= width
+
+/** Strategic rows: Maia difficulty is coarse (mostly "easy" or "hard"), so mix ~70% within reach and ~30% stretch. */
+function pickStrategic(rows: StrategicRow[], rating: number, count: number): StrategicRow[] {
+  const reach = rows.filter(r => (r.difficulty ?? 1500) <= rating + 300)
+  const stretch = rows.filter(r => (r.difficulty ?? 1500) > rating + 300)
+  const a = Math.ceil(count * 0.7)
+  return shuffle([...shuffle(reach).slice(0, a), ...shuffle(stretch).slice(0, count - Math.min(a, reach.length))]).slice(0, count)
+}
 
 function puzzleExercise(row: PuzzleRow, lesson?: string): Exercise {
   const [id, fen, moves, rating, themes] = row
@@ -121,7 +129,7 @@ function puzzleExercise(row: PuzzleRow, lesson?: string): Exercise {
 }
 
 function strategicExercise(row: StrategicRow, lesson: string | undefined, source: 'sts' | 'st'): Exercise {
-  return { kind: 'choice', id: `${source}:${row.id}`, fen: row.fen, answers: row.answers, rating: row.difficulty, lesson, title: lessonById(lesson ?? '')?.title ?? 'Strategy' }
+  return { kind: 'choice', id: `${source}:${row.id}`, fen: row.fen, answers: row.answers, rating: row.difficulty ?? 0, lesson, title: lessonById(lesson ?? '')?.title ?? 'Strategy' }
 }
 
 /** Exercises that drill one lesson, near the target rating. */
@@ -136,13 +144,11 @@ export async function exercisesFor(lessonId: string, rating: number, count: numb
   }
   if (lesson.stsThemes?.length) {
     const rows = (await loadSts()).filter(r => r.theme && lesson.stsThemes!.includes(r.theme))
-    const fit = rows.filter(r => near(r.difficulty, rating, 350))
-    out.push(...shuffle(fit.length >= 3 ? fit : rows).slice(0, count).map(r => strategicExercise(r, lessonId, 'sts')))
+    out.push(...pickStrategic(rows, rating, count).map(r => strategicExercise(r, lessonId, 'sts')))
   }
   if (lesson.structures?.length) {
     const rows = (await loadStructureExercises()).filter(r => (r.structure && lesson.structures!.includes(r.structure)) || r.structures?.some(s => lesson.structures!.includes(s)))
-    const fit = rows.filter(r => near(r.difficulty, rating, 350))
-    out.push(...shuffle(fit.length >= 3 ? fit : rows).slice(0, count).map(r => strategicExercise(r, lessonId, 'st')))
+    out.push(...pickStrategic(rows, rating, count).map(r => strategicExercise(r, lessonId, 'st')))
   }
   return shuffle(out).slice(0, count)
 }

@@ -136,6 +136,19 @@ export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNex
     setLast([uci.slice(0, 2), uci.slice(2, 4)])
     setShapes(uci === bestUci ? [] : [arrow(bestUci, 'green')])
     const notes = explainMove(fen, bestUci)
+    const side = fen.split(' ')[1] as 'w' | 'b'
+    if (uci !== bestUci) {
+      try {
+        const worse = conceptDeltas(fen, fenAfter(fen, uci)).filter(c => c.side === side && c.delta < 0 && !/mobility/i.test(c.concept)).slice(0, 1)
+        if (worse.length) notes.push(voice(`Your move ${sanOf(fen, uci)} ${worse[0].text}.`, side))
+      } catch {
+        // best-effort
+      }
+    }
+    // Structure exercises: remind the plan for this side of the structure.
+    const s0 = structuresIn(fen)[0]
+    const info = s0 && STRUCTURES[s0.id]
+    if (info) notes.push(`${info.name}: ${s0.owner === 'both' || s0.owner === side ? info.plansFor.owner : info.plansFor.opponent}`)
     if (exercise.note) notes.push(exercise.note)
     finish(success, { points, best: sanOf(fen, bestUci), played: sanOf(fen, uci), notes })
   }

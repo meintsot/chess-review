@@ -171,6 +171,8 @@ export function trainingRating(): number {
   const g = loadProgress().games.slice(0, 10)
   const elos = g.map(x => x.elo).filter((x): x is number => !!x)
   if (elos.length) return Math.round(elos.reduce((a, b) => a + b, 0) / elos.length)
-  if (g.length) return Math.round(Math.max(600, Math.min(2200, g.reduce((a, x) => a + x.rating, 0) / g.length)))
+  // Without real ratings, only trust game-rating estimates once there are a few games (one pasted master
+  // game should not set the level).
+  if (g.length >= 3) return Math.round(Math.max(600, Math.min(2200, g.reduce((a, x) => a + x.rating, 0) / g.length)))
   return 1200
 }
