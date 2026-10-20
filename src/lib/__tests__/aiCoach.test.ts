@@ -110,6 +110,17 @@ describe('AI coach', () => {
     await expect(askAiCoach(review, 'w', () => {}, 'English', undefined, { baseURL, maxRetries: 0 })).rejects.toThrow(/invalid x-api-key|401/)
   })
 
+  // Live check against the real API, only when a key is provided: ANTHROPIC_API_KEY=… npx vitest run aiCoach
+  it.skipIf(!process.env.ANTHROPIC_API_KEY)('writes a real review with the live API', async () => {
+    setApiKey(process.env.ANTHROPIC_API_KEY!)
+    const text = await askAiCoach(review, 'w', () => {}, 'Greek')
+    expect(text).toMatch(/##/)
+    expect(text).toMatch(/[α-ω]{4}/)
+    // every move it quotes must exist in the game
+    const sans = new Set(review.moves.map(m => m.san.replace(/[+#]/g, '')))
+    for (const [, san] of text.matchAll(/\d+\.(?:\.\.|…)?\s*([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?|O-O(?:-O)?)/g)) expect(sans.has(san)).toBe(true)
+  }, 180_000)
+
   it('can be cancelled mid-stream', async () => {
     mode = 'hang'
     const ctl = new AbortController()
