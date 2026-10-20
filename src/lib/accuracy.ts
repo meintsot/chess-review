@@ -8,9 +8,12 @@ export function moveAccuracy(loss: number): number {
   return Math.max(0, Math.min(100, raw))
 }
 
-/** Game accuracy: mostly the plain mean of move accuracies, partly the harmonic mean (fitted weights). */
-export function gameAccuracy(moves: { color: 'w' | 'b'; accuracy: number }[], color: 'w' | 'b'): number {
-  const xs = moves.filter(m => m.color === color).map(m => m.accuracy)
+/**
+ * Game accuracy: mostly the plain mean of move accuracies, partly the harmonic mean (fitted weights).
+ * Forced moves (only one legal move) are left out, as chess.com does (RMSE vs chess.com 4.3 → 4.0).
+ */
+export function gameAccuracy(moves: { color: 'w' | 'b'; accuracy: number; cls: string }[], color: 'w' | 'b'): number {
+  const xs = moves.filter(m => m.color === color && m.cls !== 'forced').map(m => m.accuracy)
   if (!xs.length) return 100
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length
   const harmonic = xs.length / xs.reduce((a, x) => a + 1 / Math.max(1, x), 0)

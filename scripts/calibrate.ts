@@ -23,6 +23,7 @@ const conf = new Map<string, number>()
 let exact = 0, total = 0
 const accErr: number[] = [], ratingErr: number[] = []
 const dump: unknown[] = []
+const players: unknown[] = []
 for (const lab of labels) {
   const game = games.find(g => g.review === lab.url)
   const an = analysis.find(a => game && a.url === game.url)
@@ -43,9 +44,17 @@ for (const lab of labels) {
   if (nums) accErr.push(r.accuracy.w - Number(nums[1]), r.accuracy.b - Number(nums[2]))
   const gr = lab.summary?.match(/Βαθμολογία Παρτίδας\s+(\d+)\s+(\d+)/)
   if (gr) ratingErr.push(r.gameRating.w - Number(gr[1]), r.gameRating.b - Number(gr[2]))
+  if (gr && nums) {
+    for (const [c, k] of [['w', 1], ['b', 2]] as const) {
+      const counts = Object.fromEntries(ORDER.map(o => [o, r.moves.filter(m => m.color === c && m.cls === o).length]))
+      const elo = Number(c === 'w' ? r.whiteElo : r.blackElo)
+      players.push({ game: game.url, color: c, elo, ours: r.accuracy[c], oursRating: r.gameRating[c], theirsAcc: Number(nums[k]), theirsRating: Number(gr[k]), moves: r.moves.filter(m => m.color === c).length, ...counts, tc: (game as any).tc })
+    }
+  }
 }
 
 if (process.env.DUMP) writeFileSync(process.env.DUMP, JSON.stringify(dump))
+if (process.env.PLAYERS) writeFileSync(process.env.PLAYERS, JSON.stringify(players))
 
 const rms = (xs: number[]) => Math.sqrt(xs.reduce((a, x) => a + x * x, 0) / Math.max(1, xs.length))
 const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / Math.max(1, xs.length)
