@@ -4,7 +4,7 @@ chess.com-style game review that runs entirely in the browser: Stockfish 18 (lit
 grades every move (Brilliant … Blunder), computes Lichess-style accuracy, and explains mistakes in plain words.
 
 - `npm run dev` / `npm run build`
-- Deploy: `npm run deploy` (Cloudflare Workers static assets, `wrangler.jsonc`) → https://chess-review.piano-for-hope-management.workers.dev
+- Deploy: `npm run deploy` (Cloudflare Workers static assets, `wrangler.jsonc`) → https://chess-review.meintsot.workers.dev
 - Opening book: `node scripts/build-openings.mjs` (lichess-org/chess-openings, CC0) → `public/openings.json`
 - Engine: `public/engine/` from the `stockfish` npm package (GPLv3, see `Copying.txt`)
 
