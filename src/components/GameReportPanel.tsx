@@ -138,7 +138,7 @@ export function GameReportPanel({ review, player, onGo, onLesson, onPractice }: 
         <span className="muted small">{saved ? tr({ en: 'Saved to your training profile.', el: 'Αποθηκεύτηκε στο προφίλ εξάσκησής σου.' }, lang) : ''}</span>
       </div>
 
-      <h3>{tr({ en: 'AI coach', el: 'AI προπονητής' }, lang)}</h3>
+      <h3>{tr({ en: 'AI coach (beta)', el: 'AI προπονητής (beta)' }, lang)}</h3>
       {!getApiKey() ? (
         <p className="muted small">{tr({
           en: 'Optional: add your Anthropic API key in Profile to get a written review from Claude, based only on the verified analysis above.',

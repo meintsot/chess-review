@@ -28,7 +28,7 @@ your progress stays in your browser (export/import available).
   - spaced repetition of anything you missed.
 - **Lessons** — short coach's notes on tactics, strategy, pawn structures (IQP, hanging pawns, Carlsbad, Maróczy,
   Hedgehog, French/KID chains, Sicilian structures…), endgames and habits, each linked to exercises.
-- **AI coach (optional)** — bring your own Anthropic API key (stored only in your browser) and Claude writes a
+- **AI coach (optional, beta)** — bring your own Anthropic API key (stored only in your browser) and Claude writes a
   narrative review of the game from the verified analysis only.
 - **English and Greek** — the whole app, including every coach explanation, lesson and structure plan
   (toggle ΕΛ / EN in the top bar; the browser language is the default).

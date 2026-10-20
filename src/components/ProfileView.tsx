@@ -90,8 +90,8 @@ export function ProfileView({ onPractice, onLesson }: { onPractice: (id: string)
         </label>
         <label className="field">
           <span>{tr({
-            en: 'AI coach (optional): your Anthropic API key. It is stored only in this browser and sent only to Anthropic.',
-            el: 'AI προπονητής (προαιρετικά): το κλειδί σου Anthropic API. Αποθηκεύεται μόνο σε αυτό το πρόγραμμα περιήγησης και αποστέλλεται μόνο στην Anthropic.',
+            en: 'AI coach (optional, beta): your Anthropic API key. It is stored only in this browser and sent only to Anthropic.',
+            el: 'AI προπονητής (προαιρετικά, beta): το κλειδί σου Anthropic API. Αποθηκεύεται μόνο σε αυτό το πρόγραμμα περιήγησης και αποστέλλεται μόνο στην Anthropic.',
           }, lang)}</span>
           <div className="row">
             <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-ant-…" autoComplete="off" />
