@@ -183,7 +183,7 @@ export async function reviewGame(
     if (before.moves().length === 1) cls = 'forced'
     else if (inBook) cls = 'book'
     else if (after.isCheckmate() || isBest) cls = 'best'
-    else cls = pointLossClass(subjective(scoreTop, mover), subjective(scorePlayed, mover), loss, epBefore)
+    else cls = pointLossClass(subjective(scoreTop, mover), subjective(scorePlayed, mover), loss)
 
     // Shared gate for Great and Brilliant (chess.com: not when completely winning anyway, not when
     // losing afterwards; the open-source clones also skip check evasions and promotions).
@@ -208,7 +208,8 @@ export async function reviewGame(
 
     // Miss: the opponent just erred and this move let the chance slip (without losing more than that).
     const prevReview = moves[i - 1]
-    if (prevReview && ['mistake', 'blunder', 'miss'].includes(prevReview.cls) && ['inaccuracy', 'mistake', 'blunder'].includes(cls)) {
+    // Judged on raw expected points so that, e.g., missing a mate for a still-winning move counts.
+    if (prevReview && ['mistake', 'blunder', 'miss'].includes(prevReview.cls) && !isBest && !['brilliant', 'great', 'forced', 'book'].includes(cls) && loss >= 0.05) {
       const beforeTheirError = ep(scores[i - 1])
       if (epBefore - beforeTheirError >= 0.1 && epAfter <= beforeTheirError + 0.05 && epAfter >= beforeTheirError - 0.15) cls = 'miss'
     }
@@ -282,7 +283,6 @@ function pointLossClass(
   prev: { value: number; mate?: number },
   cur: { value: number; mate?: number },
   loss: number,
-  epBefore: number,
 ): Classification {
   if (prev.mate !== undefined && cur.mate !== undefined) {
     if (prev.mate > 0 && cur.mate < 0) return cur.mate < -3 ? 'mistake' : 'blunder'
@@ -299,12 +299,12 @@ function pointLossClass(
     if (cur.value >= 0) return 'mistake'
     return 'blunder'
   }
-  if (prev.mate === undefined && cur.mate !== undefined && epBefore > 0.05) {
-    if (cur.mate > 0) return 'best'
-    if (cur.mate >= -2) return 'blunder'
-    if (cur.mate >= -5) return 'mistake'
-    return 'inaccuracy'
-  }
+  // Walking into a mate is judged by expected points like anything else: chess.com calls it only a
+  // mistake when the position was already lost.
+  return lossClass(loss)
+}
+
+function lossClass(loss: number): Classification {
   if (loss < 0.02) return 'excellent'
   if (loss < 0.05) return 'good'
   if (loss < 0.1) return 'inaccuracy'
