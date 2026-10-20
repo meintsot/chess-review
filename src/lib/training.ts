@@ -151,6 +151,11 @@ function ownToExercise(e: OwnExercise): Exercise {
   return { kind: 'choice', id: `own:${e.id}`, fen: e.fen, answers: e.answers, rating: 0, lesson: e.lesson, title: 'From your game', note: e.note, engineCheck: true }
 }
 
+/** The positions where the player went wrong in one reviewed game. */
+export function gameExercises(game: string): Exercise[] {
+  return loadProgress().own.filter(o => o.game === game).map(ownToExercise)
+}
+
 async function exerciseById(id: string): Promise<Exercise | undefined> {
   const [kind, rest] = [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)]
   if (kind === 'own') {

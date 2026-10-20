@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ExercisePlayer } from './ExercisePlayer'
 import { releaseExerciseEngine } from '../lib/exerciseEngine'
-import { dailySession, exercisesFor, type Exercise } from '../lib/training'
+import { dailySession, exercisesFor, gameExercises, type Exercise } from '../lib/training'
 import { lessonById } from '../content/lessons'
 import { streak, trainingRating } from '../lib/progress'
 
@@ -16,7 +16,11 @@ export function TrainView({ lesson, onLesson }: { lesson?: string; onLesson: (id
     // App remounts this view per lesson (key), so state starts fresh here.
     let alive = true
     const rating = trainingRating()
-    const load = lesson ? exercisesFor(lesson, rating, 10).then(items => ({ items, focus: [lesson] })) : dailySession()
+    const load = lesson?.startsWith('game-')
+      ? Promise.resolve({ items: gameExercises(lesson.slice(5)), focus: [] as string[] })
+      : lesson
+        ? exercisesFor(lesson, rating, 10).then(items => ({ items, focus: [lesson] }))
+        : dailySession()
     load
       .then(s => alive && (setItems(s.items), setFocus(s.focus)))
       .catch(e => alive && setError(String(e)))
@@ -56,7 +60,7 @@ export function TrainView({ lesson, onLesson }: { lesson?: string; onLesson: (id
   return (
     <main className="page train">
       <div className="train-head">
-        <h2>{lesson ? `Practice: ${lessonById(lesson)?.title ?? lesson}` : "Today's training"}</h2>
+        <h2>{lesson?.startsWith('game-') ? 'Your mistakes from this game' : lesson ? `Practice: ${lessonById(lesson)?.title ?? lesson}` : "Today's training"}</h2>
         <span className="muted">{index + 1} / {items.length}</span>
       </div>
       {!lesson && focus.length > 0 && (

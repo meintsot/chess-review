@@ -120,7 +120,7 @@ export function GameReportPanel({ review, player, onGo, onLesson, onPractice }: 
       )}
 
       <div className="row">
-        {own > 0 && <button className="primary" onClick={() => onPractice()}>Train on this game ({own} positions)</button>}
+        {own > 0 && <button className="primary" onClick={() => onPractice(`game-${gameId(review)}`)}>Train on this game ({own} positions)</button>}
         <span className="muted small">{saved ? 'Saved to your training profile.' : ''}</span>
       </div>
 

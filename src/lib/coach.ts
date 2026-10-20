@@ -76,11 +76,14 @@ function describeMotif(m: Motif, fens: string[], sans: string[]): string | null 
   const san = sans[m.ply]
   if (!san) return null
   const actor = m.piece ? NAME[m.piece] : 'piece'
-  const targets = (m.targets ?? [])
-    .map(sq => {
-      const p = pieceAt(after, sq) ?? pieceAt(before, sq)
-      return p ? `the ${NAME[p.type]} on ${sq}` : sq
-    })
+  // name a square's piece, looking at the board before the move first (pieces may be captured after)
+  const named = (sq?: string, prefer: 'before' | 'after' = 'before') => {
+    if (!sq) return undefined
+    const p = prefer === 'before' ? pieceAt(before, sq) ?? pieceAt(after, sq) : pieceAt(after, sq) ?? pieceAt(before, sq)
+    return p ? `the ${NAME[p.type]} on ${sq}` : sq
+  }
+  const t = m.targets ?? []
+  const targets = t.map(sq => named(sq, 'after')!)
   switch (m.kind) {
     case 'mate': {
       const n = m.mateIn ?? Math.ceil(sans.length / 2)
@@ -98,49 +101,60 @@ function describeMotif(m: Motif, fens: string[], sans: string[]): string | null 
     case 'fork':
       return targets.length ? `${san} — the ${actor}${m.square ? ` on ${m.square}` : ''} forks ${list(targets)}` : `${san} is a fork`
     case 'pin':
-      return targets.length ? `${san} pins ${list(targets)}` : `${san} creates a pin`
+      return t.length >= 2 ? `${san} pins ${named(t[0], 'after')} to ${named(t[1], 'after')} — it cannot move without exposing it` : `${san} creates a pin`
     case 'skewer':
-      return targets.length ? `${san} skewers ${list(targets)}` : `${san} is a skewer`
+      return t.length >= 2 ? `${san} skewers ${named(t[0], 'after')}: once it moves, ${named(t[1], 'after')} falls` : `${san} is a skewer`
     case 'discoveredAttack':
-      return `${san} is a discovered attack — moving the ${actor} unmasks the piece behind it`
+      return m.square ? `${san} is a discovered attack — moving out of the way unmasks the ${actor} on ${m.square}${targets.length ? `, which now hits ${list(targets)}` : ''}` : `${san} is a discovered attack`
     case 'discoveredCheck':
-      return `${san} gives a discovered check`
+      return `${san} gives a discovered check${m.square ? ` from the ${actor} on ${m.square}` : ''} — the moving piece is free to do damage`
     case 'doubleCheck':
       return `${san} is a double check — only a king move can answer it`
     case 'hangingPiece':
       return targets.length ? `${san} simply wins ${list(targets)}, which was left unprotected` : `${san} grabs a piece that was left hanging`
     case 'trappedPiece':
-      return targets.length ? `${san} traps ${list(targets)} — it has no safe square` : `${san} traps a piece`
+      return targets.length ? `${san} traps ${list(targets)} — it has no safe square left` : `${san} traps a piece`
     case 'sacrifice':
       return `${san} is a sacrifice that pays off a few moves later`
     case 'deflection':
-      return `${san} deflects a defender away from its job`
+      return t.length >= 2 ? `${san} deflects ${named(t[0])} away from guarding ${t[1]}` : `${san} deflects a defender away from its job`
     case 'attraction':
-      return `${san} lures a piece onto a fatal square`
+      return t.length && m.square ? `${san} lures ${named(t[0])} onto ${m.square}, where it becomes a target` : `${san} lures a piece onto a fatal square`
     case 'capturingDefender':
-      return `${san} removes the defender`
+      return t.length >= 2 ? `${san} removes ${named(t[0])}, the only defender of ${t[1]}` : `${san} removes the defender`
     case 'overloading':
       return `${san} exploits an overloaded defender`
     case 'interference':
-      return `${san} cuts the line between a defender and what it protects`
+      return t.length >= 2 ? `${san} cuts ${named(t[1])} off from defending ${named(t[0])}` : `${san} cuts the line between a defender and what it protects`
     case 'clearance':
-      return `${san} clears a square or line for another piece`
+      return m.square ? `${san} clears ${m.square} so another piece can use it` : `${san} clears a square or line for another piece`
     case 'intermezzo':
-      return `${san} is an in-between move — a stronger move inserted before the expected one`
+      return targets.length ? `${san} is an in-between move that wins ${list(targets)} before the expected recapture` : `${san} is an in-between move — a stronger move inserted before the expected one`
     case 'xRayAttack':
-      return `${san} works through an x-ray along the line`
+      return targets.length ? `${san} wins ${list(targets)} through an x-ray along the line` : `${san} works through an x-ray along the line`
     case 'promotion':
     case 'underPromotion':
-      return `${san} makes a new queen${m.kind === 'underPromotion' ? ' (or rather, a well-chosen under-promotion)' : ''}`
+      return `${san} promotes the pawn${m.kind === 'underPromotion' ? ' — and the under-promotion is the precise choice' : ''}`
     case 'advancedPawn':
       return `${san} — the advanced pawn is the star of this line`
     case 'exposedKing':
-      return `${san} hits an exposed king`
+      return `${san} goes after the exposed king`
     case 'attackingF2F7':
       return `${san} targets the weak f-pawn next to the king`
     default:
       return null
   }
+}
+
+/** "Nxg6 pins the pawn…" -> "Nxg6, which pins the pawn…" so it reads after "your opponent has". */
+function asClause(d: string): string {
+  let m = /^(\S+) — (.*)$/.exec(d)
+  if (m) return `${m[1]}, and ${m[2]}`
+  m = /^(\S+) is (an? .*)$/.exec(d)
+  if (m) return `${m[1]}, ${m[2]}`
+  m = /^(\S+) ([a-z]+s) (.*)$/.exec(d)
+  if (m) return `${m[1]}, which ${m[2]} ${m[3]}`
+  return d
 }
 
 const MOTIF_LESSON: Partial<Record<Motif['kind'], string>> = {
@@ -266,7 +280,7 @@ export function coachMove(review: GameReview, index: number): CoachNote {
 
   if (allowed.length) {
     const d = describeMotif(allowed[0], reply.fens, reply.sans)
-    if (d) tactical.push(`After ${m.san}, your opponent has ${d}.`)
+    if (d) tactical.push(`After ${m.san}, your opponent has ${asClause(d)}.`)
     allowed.slice(0, 2).forEach(x => MOTIF_LESSON[x.kind] && lessons.add(MOTIF_LESSON[x.kind]!))
   }
   if (missed.length && m.bestSan) {
@@ -283,8 +297,8 @@ export function coachMove(review: GameReview, index: number): CoachNote {
   const concepts = m.cls === 'book' ? [] : safeConcepts(m.fenBefore, m.fenAfter)
   const mine = concepts.filter(c => c.side === mover)
   const theirs = concepts.filter(c => c.side !== mover)
-  const gains = mine.filter(c => c.delta > 0).slice(0, 2)
-  const losses = mine.filter(c => c.delta < 0).slice(0, 2)
+  const gains = mine.filter(c => c.delta > 0).filter((c, i, all) => all.findIndex(x => x.concept === c.concept) === i).slice(0, 2)
+  const losses = mine.filter(c => c.delta < 0).filter((c, i, all) => all.findIndex(x => x.concept === c.concept) === i).slice(0, 2)
   const oppGains = theirs.filter(c => c.delta > 0).slice(0, 1)
 
   if (good && !played.length && gains.length && !(gains.length === 1 && isMobility(gains[0]))) strategic.push(`Positionally, ${m.san} ${list(gains.map(c => c.text))}.`)
