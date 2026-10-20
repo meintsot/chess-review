@@ -2,9 +2,9 @@
 // scale (Lichess ratings are converted with the usual rule of thumb lichess ≈ 0.75 × chess.com + 650).
 //
 // Two curves, because chess.com's numbers show two different behaviours:
-//  - Move labels use a rating-aware curve. Its shape (steeper for stronger players) was fitted on ~1M
-//    positions from rated Lichess games; its level was scaled so labels best match a fully labelled
-//    chess.com review (k ≈ 0.0045 around 1450).
+//  - Move labels use a rating-aware curve (steeper for stronger players), fitted to ~3,800 moves from 51
+//    scraped chess.com Game Reviews. On chess.com's own evals it reproduces 85% of their labels exactly,
+//    and the published thresholds (.02/.05/.10/.20) come out as the best fit.
 //  - Accuracy uses an almost rating-free curve fitted to chess.com's official accuracies on 560
 //    reviewed games from 100 to 3000 (RMSE 4.8 points, no bias by rating band).
 import type { Score } from './score'
@@ -27,7 +27,7 @@ const clampRating = (r: number) => Math.max(100, Math.min(3000, r))
 
 /** Slope used for move labels. */
 export function labelSlope(rating: number): number {
-  return 1.566e-6 * clampRating(rating) + 2.221e-3
+  return 1.75e-6 * clampRating(rating) + 2.0e-3
 }
 
 /** Slope used for accuracy. */

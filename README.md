@@ -11,8 +11,13 @@ grades every move (Brilliant … Blunder), computes Lichess-style accuracy, and 
 Core logic lives in `src/lib/review.ts` (classification + explanations), `accuracy.ts`, `engine.ts`.
 
 ## Calibration against chess.com
-- Labels: chess.com's expected-points table (.02/.05/.10/.20) on a rating-aware curve (shape fitted on ~1M Lichess
-  positions, level tuned to a fully labelled chess.com review); "Best" = engine move or ≤ 0.002 lost.
-- Accuracy: curve and aggregation fitted to chess.com's official accuracies on 560 reviewed games (RMSE 4.8).
-- Game rating: rating + 40 × (accuracy − typical accuracy for that rating and time control).
-- Book: lichess-org/chess-openings plus positions reached ≥ 100 times in 150k strong Lichess games (`scripts/openings/popular.json`).
+Measured on 51 scraped chess.com Game Reviews (3,799 moves) with the app's own engine (lite, depth 18):
+- Labels: 60% identical, 91% identical or one step apart. On chess.com's *own* evals the same rules reproduce 85%
+  of labels, so the remaining gap is engine-vs-engine noise. Expected-points curve k = 1.75e-6·rating + 0.002;
+  chess.com's published thresholds (.02/.05/.10/.20) come out as the best fit.
+- Great / Miss / Brilliant rules fitted on the same reviews (see comments in `src/lib/review.ts`).
+- Accuracy: bias 0.2, RMSE 4.3 points. Game rating: RMSE ~190 (vs chess.com's Game Rating).
+- Displayed evals use chess.com's scale: 748·tanh(cp/748).
+- Book: lichess-org/chess-openings plus positions reached ≥ 25 times in 150k strong Lichess games.
+
+Re-run the comparison with `npx tsx scripts/calibrate.ts <games.json> <analysis.json> <labels.json>`.

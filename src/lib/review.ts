@@ -31,6 +31,8 @@ export interface MoveReview {
   cls: Classification
   opening?: string
   comment: string
+  /** Raw signals behind the label, used to calibrate against chess.com (scripts/calibrate.ts). */
+  features?: Record<string, number | boolean | string>
 }
 
 export interface GameReview {
@@ -104,27 +106,13 @@ function describeLoss(swing: number) {
   return 'a pawn'
 }
 
-export async function reviewGame(
-  pgn: string,
-  depth: number,
-  onProgress: (done: number, total: number) => void,
-): Promise<GameReview> {
+function parseGame(pgn: string) {
   const game = new Chess()
   game.loadPgn(pgn)
   const headers = game.getHeaders()
   const history = game.history({ verbose: true })
   if (!history.length) throw new Error('This game has no moves.')
   const startFen = history[0].before
-  const book = await loadBook()
-
-  const site = (headers.Site ?? '').toLowerCase()
-  const source: RatingSource = site.includes('chess.com') ? 'chess.com' : site.includes('lichess') ? 'lichess' : 'other'
-  const rating = {
-    w: toChessComScale(Number(headers.WhiteElo), source),
-    b: toChessComScale(Number(headers.BlackElo), source),
-  }
-
-  // Engine: every position from the start through the final one.
   const fens = [startFen, ...history.map(m => m.after)]
   const terminal = fens.map(f => {
     const c = new Chess(f)
@@ -132,6 +120,18 @@ export async function reviewGame(
     if (c.isStalemate() || c.isInsufficientMaterial()) return { draw: true } as Score
     return null
   })
+  return { headers, history, startFen, fens, terminal }
+}
+
+export async function reviewGame(
+  pgn: string,
+  depth: number,
+  onProgress: (done: number, total: number) => void,
+): Promise<GameReview> {
+  const { history, startFen, fens, terminal } = parseGame(pgn)
+  const book = await loadBook()
+
+  // Engine: every position from the start through the final one.
   const pool = new EnginePool()
   const jobs = fens.map((_, i) => ({ startFen, moves: history.slice(0, i).map(uciOf), depth, multiPv: 2 }))
   const todo = jobs.map((j, i) => ({ j, i })).filter(({ i }) => !terminal[i])
@@ -142,6 +142,18 @@ export async function reviewGame(
     todo.forEach((t, k) => (results[t.i] = raw[k]))
   } finally {
     pool.terminate()
+  }
+  return buildReview(pgn, results, book, depth)
+}
+
+/** Classify every move from engine results (one per position, terminal positions left empty). */
+export function buildReview(pgn: string, results: EngineResult[], book: Record<string, string>, depth: number): GameReview {
+  const { headers, history, startFen, fens, terminal } = parseGame(pgn)
+  const site = (headers.Site ?? '').toLowerCase()
+  const source: RatingSource = site.includes('chess.com') ? 'chess.com' : site.includes('lichess') ? 'lichess' : 'other'
+  const rating = {
+    w: toChessComScale(Number(headers.WhiteElo), source),
+    b: toChessComScale(Number(headers.BlackElo), source),
   }
 
   const scores: Score[] = fens.map((f, i) => {
@@ -194,18 +206,22 @@ export async function reviewGame(
     const winningAnyway = secondSubj ? secondSubj.value >= 700 : curSubj.value >= 700
     const candidate = !inBook && cls !== 'forced' && !after.isCheckmate() && !winningAnyway && curSubj.value >= 0 && !before.inCheck()
 
+    // Brilliant (fitted on scraped chess.com reviews): a real sacrifice that stands out from the next-best
+    // option (≥ 0.05 lost) and leaves you clearly better (≥ +1.00). Sacrifices in level positions or that
+    // are one of several good moves get Best/Great on chess.com.
     let sacrificed: Piece[] = []
-    const generous = R < 1100 // chess.com is more generous with Brilliant/Great for newer players
-    const nearBest = isBest || loss < (generous ? 0.02 : 0.01)
-    if (candidate && nearBest && !m.promotion) sacrificed = sacrificedPieces(before, after, m)
+    const standsOut = !!scoreSecond && epBefore - ep(scoreSecond) >= 0.05
+    if (candidate && isBest && standsOut && curSubj.value >= 100 && !m.promotion) sacrificed = sacrificedPieces(before, after, m)
     if (sacrificed.length) {
       cls = 'brilliant'
-    } else if (candidate && isBest && m.promotion !== 'q' && !(curSubj.mate && curSubj.mate > 0) && scoreSecond) {
+    } else if (!inBook && cls === 'best' && isBest && !after.isCheckmate() && scoreSecond && epBefore > 0.35) {
+      // Great, as chess.com labels it (fitted on scraped reviews): the engine move when the next-best
+      // option loses ≥ 0.10. Check evasions and winning positions qualify; recaptures and grabbing
+      // material that was simply hanging do not.
       const prev = history[i - 1]
       const recapture = !!(prev?.captured && m.captured && prev.to === m.to)
       const freeCapture = !!m.captured && !isSafe(before, { square: capturedSquare(m), type: m.captured, color: other(mover) })
-      const onlyMove = epBefore - ep(scoreSecond) >= greatThreshold(R)
-      if (onlyMove && !recapture && !freeCapture) cls = 'great'
+      if (epBefore - ep(scoreSecond) > greatThreshold(R) && !recapture && !freeCapture) cls = 'great'
     }
 
     // Miss: the opponent just erred and this move let the chance slip (without losing more than that).
@@ -213,11 +229,27 @@ export async function reviewGame(
     // Judged on expected points rather than the label, so the opponent's error counts from ~0.08 lost and
     // missing a forced mate counts even when the move played still wins.
     // chess.com: a Miss is failing to take a *winning* chance the opponent offered.
-    if (prevReview && prevReview.cls !== 'miss' && prevReview.loss >= 0.06 && !['best', 'brilliant', 'great', 'forced', 'book'].includes(cls)) {
-      const beforeTheirError = ep(scores[i - 1])
+    // Fitted on scraped chess.com reviews: the opponent's last move lost > 0.08, this one loses > 0.09 (or
+    // throws away a forced mate) but the position doesn't collapse (> 25% expected score left).
+    if (prevReview && prevReview.loss > 0.08 && !['best', 'brilliant', 'great', 'forced', 'book'].includes(cls)) {
       const missedMate = (subjective(scoreTop, mover).mate ?? 0) > 0 && !((curSubj.mate ?? 0) > 0)
-      const gaveBack = loss >= 0.05 && epAfter <= beforeTheirError + 0.05 && epAfter >= beforeTheirError - 0.15
-      if (epBefore >= 0.65 && epBefore - beforeTheirError >= 0.1 && (missedMate || gaveBack)) cls = 'miss'
+      if ((loss > 0.09 && epAfter > 0.25) || missedMate) cls = 'miss'
+    }
+
+    const prevMove = history[i - 1]
+    const sacAny = !sacrificed.length && (isBest || loss < 0.03) && !m.promotion && !after.isCheckmate() ? sacrificedPieces(before, after, m) : sacrificed
+    const features = {
+      base: pointLossClass(subjective(scoreTop, mover), subjective(scorePlayed, mover), loss),
+      isBest, loss, epBefore, epAfter, R, ply: i + 1,
+      cur: curSubj.value, curMate: curSubj.mate ?? 0, topMate: subjective(scoreTop, mover).mate ?? 0,
+      second: secondSubj ? secondSubj.value : NaN, secondGap: scoreSecond ? epBefore - ep(scoreSecond) : NaN,
+      inCheck: before.inCheck(), promo: m.promotion ?? '', capture: m.captured ?? '',
+      recapture: !!(prevMove?.captured && m.captured && prevMove.to === m.to),
+      freeCapture: !!m.captured && !isSafe(before, { square: capturedSquare(m), type: m.captured, color: other(mover) }),
+      sacValue: sacAny.reduce((a, p) => Math.max(a, VALUE[p.type]), 0),
+      prevLoss: moves[i - 1]?.loss ?? 0, prevCls: moves[i - 1]?.cls ?? '',
+      epBeforeTheirError: i > 0 ? ep(scores[i - 1]) : NaN,
+      inBook,
     }
 
     const bestLineSan = res ? sanLine(m.before, res.lines[0]?.pv ?? []) : []
@@ -246,6 +278,7 @@ export async function reviewGame(
       cls,
       opening: opening || undefined,
       comment: '',
+      features,
     }
     review.comment = explain(review, { sacrificed, res, replyPv, secondSan: second ? sanLine(m.before, second.pv, 1)[0] : undefined, after })
     moves.push(review)
@@ -321,12 +354,11 @@ function lossClass(loss: number): Classification {
 }
 
 // chess.com's table says Best is 0.00 loss; in its reviews moves that lose ~nothing also get Best.
-const BEST_EPSILON = 0.002
+const BEST_EPSILON = 0
 
-/** How much worse the next-best move must be for "only move" (Great); lower for newer players. */
-function greatThreshold(rating: number) {
-  const t = (rating - 750) / 800
-  return 0.08 + 0.02 * Math.max(0, Math.min(1, t))
+/** How much worse the next-best move must be for "only move" (Great). */
+function greatThreshold(_rating: number) {
+  return 0.1
 }
 
 interface ExplainCtx {

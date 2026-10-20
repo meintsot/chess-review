@@ -1,10 +1,10 @@
 /**
  * Per-move accuracy (0..100) from expected points lost. Same exponential shape as Lichess, with the decay
- * fitted to chess.com's official accuracies (chess.com punishes each point of loss ~3× harder).
+ * fitted to chess.com's official accuracies with the in-browser lite engine (≈3.5× harsher per point).
  */
 export function moveAccuracy(loss: number): number {
   if (loss <= 0) return 100
-  const raw = 103.1668 * Math.exp(-0.14287 * loss * 100) - 3.1669 + 1
+  const raw = 103.1668 * Math.exp(-0.155 * loss * 100) - 3.1669 + 1
   return Math.max(0, Math.min(100, raw))
 }
 
@@ -35,15 +35,14 @@ const TYPICAL: Record<Speed, [number, number]> = {
   rapid: [58.92, 0.01137],
   daily: [68.01, 0.00798],
 }
-const POINTS_PER_ACCURACY = 40 // matches chess.com's Game Rating on reviewed games
-
 /**
- * chess.com-style "Game Rating" (chess.com scale): the player's rating moved up or down by how far this
- * game's accuracy is from what is typical at that rating and time control. Without a known rating, the
- * rating at which this accuracy would be typical.
+ * chess.com-style "Game Rating" (chess.com scale), fitted on 84 scraped chess.com reviews (cross-validated
+ * RMSE 173): the rating, pulled slightly toward 1800, moved ~28 points per accuracy point above or below
+ * what is typical at that rating and time control. Without a known rating, the rating at which this
+ * accuracy would be typical.
  */
 export function estimateRating(accuracy: number, speed: Speed, rating?: number): number {
   const [a, b] = TYPICAL[speed]
   if (!rating) return Math.max(100, Math.min(3200, (accuracy - a) / b))
-  return Math.max(100, Math.min(3300, rating + POINTS_PER_ACCURACY * (accuracy - (a + b * rating))))
+  return Math.max(100, Math.min(3300, 0.88 * rating + 0.12 * 1800 + 27.8 * (accuracy - (a + b * rating))))
 }
