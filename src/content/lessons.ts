@@ -366,3 +366,16 @@ export const LESSONS: Lesson[] = [
 ]
 
 export const lessonById = (id: string) => LESSONS.find(l => l.id === id)
+
+import { LESSONS_EL } from './lessons.el'
+import { getLang, type Lang } from '../i18n'
+
+/** A lesson in the current language (falls back to English). */
+export function localizedLesson(id: string, lang: Lang = getLang()): Lesson | undefined {
+  const base = lessonById(id)
+  if (!base || lang === 'en') return base
+  const el = LESSONS_EL[id]
+  return el ? { ...base, ...el } : base
+}
+
+export const lessonTitle = (id: string, lang: Lang = getLang()) => localizedLesson(id, lang)?.title ?? id

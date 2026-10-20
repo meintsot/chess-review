@@ -7,6 +7,9 @@ import { reviewGame, type GameReview } from './lib/review'
 import { fetchChessCom, fetchLichess, type GameSummary } from './lib/importers'
 import { loadProgress, setPlayer } from './lib/progress'
 import { playerSide } from './lib/training'
+import { getLang, setLang, tr, useLang, type Lang } from './i18n'
+
+document.documentElement.lang = getLang()
 
 type View = 'review' | 'train' | 'lessons' | 'profile'
 
@@ -18,12 +21,24 @@ function readRoute(): { view: View; arg?: string } {
 const goTo = (view: View, arg?: string) => { location.hash = `/${view}${arg ? `/${arg}` : ''}` }
 
 function Nav({ view }: { view: View }) {
-  const items: [View, string][] = [['review', 'Review'], ['train', 'Train'], ['lessons', 'Lessons'], ['profile', 'Profile']]
+  const lang = useLang()
+  const items: [View, string][] = [
+    ['review', tr({ en: 'Review', el: 'Ανάλυση' }, lang)],
+    ['train', tr({ en: 'Train', el: 'Εξάσκηση' }, lang)],
+    ['lessons', tr({ en: 'Lessons', el: 'Μαθήματα' }, lang)],
+    ['profile', tr({ en: 'Profile', el: 'Προφίλ' }, lang)],
+  ]
+  const langs: [Lang, string, string][] = [['en', 'EN', 'English'], ['el', 'ΕΛ', 'Ελληνικά']]
   return (
     <nav className="topnav">
-      <a className="brand" href="#/review"><span className="logo">♞</span> Game Review</a>
+      <a className="brand" href="#/review"><span className="logo">♞</span> <span className="brand-text">{tr({ en: 'Game Review', el: 'Ανάλυση Παρτίδας' }, lang)}</span></a>
       <div className="navlinks">
         {items.map(([v, label]) => <a key={v} href={`#/${v}`} className={view === v ? 'on' : ''}>{label}</a>)}
+      </div>
+      <div className="lang-toggle" role="group" aria-label={tr({ en: 'Language', el: 'Γλώσσα' }, lang)}>
+        {langs.map(([l, short, name]) => (
+          <button key={l} lang={l} className={lang === l ? 'on' : ''} aria-pressed={lang === l} title={name} onClick={() => setLang(l)}>{short}</button>
+        ))}
       </div>
     </nav>
   )
@@ -32,10 +47,32 @@ function Nav({ view }: { view: View }) {
 type Source = 'chess.com' | 'lichess' | 'pgn'
 
 const DEPTHS = [
-  { label: 'Fast', depth: 14 },
-  { label: 'Standard', depth: 18 },
-  { label: 'Deep', depth: 22 },
+  { label: { en: 'Fast', el: 'Γρήγορη' }, depth: 14 },
+  { label: { en: 'Standard', el: 'Κανονική' }, depth: 18 },
+  { label: { en: 'Deep', el: 'Σε βάθος' }, depth: 22 },
 ]
+
+const SPEED_EL: Record<string, string> = {
+  ultraBullet: 'UltraBullet',
+  bullet: 'μπούλετ',
+  blitz: 'μπλιτς',
+  rapid: 'ράπιντ',
+  classical: 'κλασικό',
+  daily: 'ημερήσιο',
+  correspondence: 'δι’ αλληλογραφίας',
+}
+
+/** Errors thrown by the importers and the PGN reader are English; give Greek users their own words. */
+function localizeError(msg: string, lang: Lang): string {
+  if (lang === 'en') return msg
+  const m = msg.match(/^No (chess\.com|lichess) player "(.*)"\.$/)
+  if (m) return `Δεν βρέθηκε παίκτης ${m[1] === 'lichess' ? 'Lichess' : 'chess.com'} «${m[2]}».`
+  const e = msg.match(/^(chess\.com|lichess) error (\d+)$/)
+  if (e) return `Σφάλμα ${e[1] === 'lichess' ? 'Lichess' : 'chess.com'} ${e[2]}`
+  if (msg === 'This game has no moves.') return 'Αυτή η παρτίδα δεν έχει κινήσεις.'
+  if (msg === 'Failed to fetch') return 'Αποτυχία σύνδεσης. Έλεγξε τη σύνδεσή σου στο διαδίκτυο.'
+  return msg
+}
 
 const SAMPLE = `[Event "Opera Game"]
 [White "Paul Morphy"]
@@ -75,20 +112,23 @@ export default function App() {
   )
 }
 
+type Busy = 'fetching' | 'analysing'
+
 function ReviewPage() {
+  const lang = useLang()
   const [source, setSource] = useState<Source>(() => (savedUser('src') as Source) || 'chess.com')
   const [username, setUsername] = useState(() => savedUser('user'))
   const [pgn, setPgn] = useState('')
   const [games, setGames] = useState<GameSummary[] | null>(null)
   const [depth, setDepth] = useState(18)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusy] = useState<Busy | null>(null)
   const [progress, setProgress] = useState(0)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | { en: string; el: string } | null>(null)
   const [review, setReview] = useState<GameReview | null>(null)
 
   const loadGames = async () => {
     setError(null)
-    setBusy('Fetching games…')
+    setBusy('fetching')
     try {
       const list = source === 'lichess' ? await fetchLichess(username) : await fetchChessCom(username)
       setGames(list)
@@ -97,7 +137,7 @@ function ReviewPage() {
         if (!loadProgress().player) setPlayer(username.trim(), source)
         localStorage.setItem('src', source)
       } catch { /* storage unavailable */ }
-      if (!list.length) setError('No recent standard games found.')
+      if (!list.length) setError({ en: 'No recent standard games found.', el: 'Δεν βρέθηκαν πρόσφατες παρτίδες κανονικού σκακιού.' })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -108,11 +148,11 @@ function ReviewPage() {
   const analyse = async (text: string) => {
     setError(null)
     setProgress(0)
-    setBusy('Analysing with Stockfish…')
+    setBusy('analysing')
     try {
       setReview(await reviewGame(text, depth, (d, t) => setProgress(d / t)))
     } catch (e) {
-      setError((e as Error).message || 'Could not read that PGN.')
+      setError((e as Error).message || { en: 'Could not read that PGN.', el: 'Δεν ήταν δυνατή η ανάγνωση αυτού του PGN.' })
     } finally {
       setBusy(null)
     }
@@ -131,53 +171,60 @@ function ReviewPage() {
     )
   }
 
+  const sourceName = source === 'lichess' ? 'Lichess' : 'chess.com'
+
   return (
     <main className="home">
       <header>
-        <h1><span className="logo">♞</span> Game Review</h1>
-        <p className="muted">Every move graded and explained by Stockfish — in plain words. Runs entirely in your browser.</p>
+        <h1><span className="logo">♞</span> {tr({ en: 'Game Review', el: 'Ανάλυση Παρτίδας' }, lang)}</h1>
+        <p className="muted">{tr({
+          en: 'Every move graded and explained by Stockfish — in plain words. Runs entirely in your browser.',
+          el: 'Κάθε κίνηση αξιολογείται και εξηγείται από το Stockfish — με απλά λόγια. Λειτουργεί εξ ολοκλήρου στο πρόγραμμα περιήγησής σου.',
+        }, lang)}</p>
       </header>
 
       <div className="card">
         <div className="tabs" role="tablist">
           {(['chess.com', 'lichess', 'pgn'] as Source[]).map(s => (
             <button key={s} role="tab" aria-selected={source === s} className={source === s ? 'on' : ''} onClick={() => { setSource(s); setGames(null); setError(null) }}>
-              {s === 'pgn' ? 'Paste PGN' : s === 'lichess' ? 'Lichess' : 'Chess.com'}
+              {s === 'pgn' ? tr({ en: 'Paste PGN', el: 'Επικόλληση PGN' }, lang) : s === 'lichess' ? 'Lichess' : 'Chess.com'}
             </button>
           ))}
         </div>
 
         {source === 'pgn' ? (
           <div className="stack">
-            <textarea value={pgn} onChange={e => setPgn(e.target.value)} placeholder="Paste a PGN here…" rows={9} spellCheck={false} />
+            <textarea value={pgn} onChange={e => setPgn(e.target.value)} placeholder={tr({ en: 'Paste a PGN here…', el: 'Επικόλλησε ένα PGN εδώ…' }, lang)} rows={9} spellCheck={false} />
             <div className="row">
-              <button className="primary" disabled={!!busy || !pgn.trim()} onClick={() => analyse(pgn)}>Review game</button>
-              <button className="link" onClick={() => setPgn(SAMPLE)}>Try Morphy's Opera Game</button>
+              <button className="primary" disabled={!!busy || !pgn.trim()} onClick={() => analyse(pgn)}>{tr({ en: 'Review game', el: 'Ανάλυση παρτίδας' }, lang)}</button>
+              <button className="link" onClick={() => setPgn(SAMPLE)}>{tr({ en: "Try Morphy's Opera Game", el: 'Δοκίμασε την «Παρτίδα της Όπερας» του Morphy' }, lang)}</button>
             </div>
           </div>
         ) : (
           <form className="row" onSubmit={e => { e.preventDefault(); if (username.trim()) loadGames() }}>
-            <input value={username} onChange={e => setUsername(e.target.value)} placeholder={`${source} username`} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-            <button className="primary" disabled={!!busy || !username.trim()}>Find games</button>
+            <input value={username} onChange={e => setUsername(e.target.value)} placeholder={tr({ en: `${source} username`, el: `Χρήστης ${sourceName}` }, lang)} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+            <button className="primary" disabled={!!busy || !username.trim()}>{tr({ en: 'Find games', el: 'Βρες παρτίδες' }, lang)}</button>
           </form>
         )}
 
         <div className="depth">
-          <span className="muted">Analysis</span>
+          <span className="muted">{tr({ en: 'Analysis', el: 'Ανάλυση' }, lang)}</span>
           {DEPTHS.map(d => (
             <button key={d.depth} className={`pill${depth === d.depth ? ' on' : ''}`} onClick={() => setDepth(d.depth)}>
-              {d.label} <span className="muted">d{d.depth}</span>
+              {tr(d.label, lang)} <span className="muted">d{d.depth}</span>
             </button>
           ))}
         </div>
 
         {busy && (
           <div className="progress">
-            <span>{busy}</span>
-            {busy.startsWith('Analysing') && <div className="bar"><div style={{ width: `${progress * 100}%` }} /></div>}
+            <span>{busy === 'analysing'
+              ? tr({ en: 'Analysing with Stockfish…', el: 'Ανάλυση με το Stockfish…' }, lang)
+              : tr({ en: 'Fetching games…', el: 'Λήψη παρτίδων…' }, lang)}</span>
+            {busy === 'analysing' && <div className="bar"><div style={{ width: `${progress * 100}%` }} /></div>}
           </div>
         )}
-        {error && <p className="error">{error}</p>}
+        {error && <p className="error">{typeof error === 'string' ? localizeError(error, lang) : tr(error, lang)}</p>}
 
         {games && source !== 'pgn' && !busy && (
           <ul className="games">
@@ -190,7 +237,7 @@ function ReviewPage() {
                   </span>
                   <span className="g-meta">
                     <span className="result">{g.result}</span>
-                    <span className="muted">{g.speed} · {new Date(g.date).toLocaleDateString()}</span>
+                    <span className="muted">{lang === 'el' ? SPEED_EL[g.speed] ?? g.speed : g.speed} · {new Date(g.date).toLocaleDateString(lang === 'el' ? 'el-GR' : undefined)}</span>
                   </span>
                 </button>
               </li>

@@ -33,7 +33,7 @@ describe('coach', () => {
   it('writes a note for every move without throwing', () => {
     for (const r of reviews) {
       r.moves.forEach((m, i) => {
-        const note = coachMove(r, i)
+        const note = coachMove(r, i, 'en')
         expect(note.headline.length).toBeGreaterThan(3)
         if (['mistake', 'blunder', 'miss'].includes(m.cls)) expect(note.tactical.length + note.strategic.length + (note.advice ? 1 : 0)).toBeGreaterThan(0)
         for (const l of note.lessons) expect(LESSONS.some(x => x.id === l)).toBe(true)
@@ -44,13 +44,13 @@ describe('coach', () => {
   it('speaks to the player: no raw colour names, no control characters, opponent moments retold', () => {
     for (const r of reviews) {
       r.moves.forEach((m, i) => {
-        const note = coachMove(r, i)
+        const note = coachMove(r, i, 'en')
         for (const t of [...note.tactical, ...note.strategic]) {
           expect([...t].some(ch => ch.charCodeAt(0) < 9)).toBe(false)
           expect(t).not.toMatch(m.color === 'w' ? /\bWhite's\b/ : /\bBlack's\b/)
         }
       })
-      const rep = coachGame(r, 'w')
+      const rep = coachGame(r, 'w', 'en')
       for (const mo of rep.moments) {
         if (!mo.text.includes('(You)')) expect(mo.text).not.toMatch(/your opponent has/)
       }
@@ -60,11 +60,39 @@ describe('coach', () => {
   it('builds a game report from the player\'s side', () => {
     for (const r of reviews) {
       for (const side of ['w', 'b'] as const) {
-        const rep = coachGame(r, side)
+        const rep = coachGame(r, side, 'en')
         expect(rep.overview).toMatch(/accuracy/)
         expect(rep.phases.length).toBeGreaterThan(0)
         for (const i of rep.improve) expect(LESSONS.some(l => l.id === i.lesson)).toBe(true)
         for (const m of rep.moments) expect(m.ply).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('speaks Greek: same facts, no English words, valid squares and grammar', () => {
+    const ENGLISH = /\b(the|and|your|opponent|pawn|knight|bishop|rook|queen|king|move|file|rank|wins|after|was|with|it)\b/i
+    for (const r of reviews) {
+      r.moves.forEach((_, i) => {
+        const en = coachMove(r, i, 'en')
+        const el = coachMove(r, i, 'el')
+        // the language changes the words, never the analysis
+        expect(el.lessons).toEqual(en.lessons)
+        expect(el.motifs).toEqual(en.motifs)
+        expect(el.tactical.length).toBe(en.tactical.length)
+        expect(el.strategic.length).toBe(en.strategic.length)
+        for (const t of [el.headline, ...el.tactical, ...el.strategic, el.advice ?? '']) {
+          expect(t).not.toMatch(ENGLISH)
+          expect(t).not.toMatch(/undefined|NaN|\s{2,}| σε (το|τον|τη|την) |(^|\s)(σ?την) [μλρσ]/)
+          for (const sq of t.match(/στο ([a-z]\d+)/g) ?? []) expect(sq).toMatch(/^στο [a-h][1-8]$/)
+        }
+      })
+      for (const side of ['w', 'b'] as const) {
+        const rep = coachGame(r, side, 'el')
+        expect(rep.overview).toMatch(/ακρίβεια/)
+        expect(rep.improve.map(x => x.lesson)).toEqual(coachGame(r, side, 'en').improve.map(x => x.lesson))
+        for (const t of [...rep.phases.map(p => p.text), ...rep.strengths]) expect(t).not.toMatch(ENGLISH)
+        // the opponent's moments are retold to the player, never as "ο αντίπαλος έχει"
+        for (const mo of rep.moments) if (!mo.text.includes('(Εσύ)')) expect(mo.text).not.toMatch(/ο αντίπαλος έχει|Είχες κερδιστικό/)
       }
     }
   })

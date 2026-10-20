@@ -48,3 +48,20 @@ export function badgeSvg(cls: Classification, cx = 50, cy = 50, r = 46): string 
     `<g transform="translate(${cx} ${cy}) scale(${r / 46})">${GLYPHS[cls]}</g>`
   )
 }
+
+const CLASS_EL: Record<Classification, { label: string; phrase: string }> = {
+  brilliant: { label: 'Εκπληκτική', phrase: 'είναι εκπληκτική κίνηση' },
+  great: { label: 'Σπουδαία', phrase: 'είναι σπουδαία κίνηση' },
+  best: { label: 'Καλύτερη', phrase: 'είναι η καλύτερη κίνηση' },
+  excellent: { label: 'Άριστη', phrase: 'είναι άριστη κίνηση' },
+  good: { label: 'Καλή', phrase: 'είναι καλή κίνηση' },
+  book: { label: 'Θεωρία', phrase: 'είναι κίνηση θεωρίας' },
+  forced: { label: 'Αναγκαστική', phrase: 'είναι αναγκαστική' },
+  inaccuracy: { label: 'Ανακρίβεια', phrase: 'είναι ανακρίβεια' },
+  mistake: { label: 'Λάθος', phrase: 'είναι λάθος' },
+  miss: { label: 'Χαμένη ευκαιρία', phrase: 'είναι χαμένη ευκαιρία' },
+  blunder: { label: 'Αβλεψία', phrase: 'είναι αβλεψία' },
+}
+
+/** Label and phrase ("Nf3 is a mistake") in the given language. */
+export const classText = (cls: Classification, lang: 'en' | 'el') => (lang === 'el' ? CLASS_EL[cls] : CLASS_INFO[cls])

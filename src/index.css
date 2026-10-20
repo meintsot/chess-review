@@ -154,6 +154,15 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .navlinks { display: flex; gap: 4px; overflow-x: auto; }
 .navlinks a { color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 8px; font-weight: 600; font-size: 14px; white-space: nowrap; }
 .navlinks a.on, .navlinks a:hover { color: var(--text); background: var(--surface-2); }
+.navlinks { margin-left: auto; min-width: 0; }
+.lang-toggle { display: flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+.lang-toggle button { background: none; border: 0; color: var(--muted); padding: 4px 8px; font-size: 12px; font-weight: 700; }
+.lang-toggle button.on { background: var(--surface-2); color: var(--text); }
+@media (max-width: 560px) {
+  .topnav { flex-wrap: wrap; row-gap: 6px; padding-bottom: 6px; }
+  .navlinks { order: 3; flex-basis: 100%; margin-left: 0; justify-content: space-between; }
+  .navlinks a { padding: 6px 8px; }
+}
 .page { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
 .page h2 { margin: 6px 0 12px; }
 .page h3 { margin: 22px 0 10px; font-size: 15px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }

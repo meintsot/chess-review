@@ -4,10 +4,13 @@
 import { Chess, type PieceSymbol, type Square } from 'chess.js'
 import { detectMotifs, type Motif, type PrevMove } from './motifs'
 import { conceptDeltas, type ConceptDelta } from './positional'
-import { classifyStructure, STRUCTURES, type Structure } from './structures'
+import { conceptTextEl } from './positional.el'
+import { classifyStructure, structureInfo, type Structure } from './structures'
 import type { Classification, GameReview, MoveReview } from './review'
 import { formatScore } from './score'
-import { lessonById } from '../content/lessons'
+import { lessonTitle } from '../content/lessons'
+import { getLang, type Lang } from '../i18n'
+import { capturedHere, describeMotifEl, PHRASES_EL, TEXT_EL } from './coach.el'
 
 const NAME: Record<PieceSymbol, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' }
 const VALUE: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 }
@@ -79,6 +82,7 @@ function describeMotif(m: Motif, fens: string[], sans: string[]): string | null 
   // name a square's piece, looking at the board before the move first (pieces may be captured after)
   const named = (sq?: string, prefer: 'before' | 'after' = 'before') => {
     if (!sq) return undefined
+    if (capturedHere(before, after, sq)) prefer = 'before'
     const p = prefer === 'before' ? pieceAt(before, sq) ?? pieceAt(after, sq) : pieceAt(after, sq) ?? pieceAt(before, sq)
     return p ? `the ${NAME[p.type]} on ${sq}` : sq
   }
@@ -171,6 +175,33 @@ const MOTIF_LESSON: Partial<Record<Motif['kind'], string>> = {
 
 const TACTICAL_KINDS = new Set(Object.keys(MOTIF_LESSON))
 
+// What a coach mentions first: mates and material-winning patterns before supporting ideas.
+const PRIORITY: Motif['kind'][] = [
+  'mate', 'backRankMate', 'smotheredMate', 'anastasiaMate', 'hookMate', 'arabianMate', 'doubleBishopMate',
+  'fork', 'skewer', 'pin', 'doubleCheck', 'discoveredCheck', 'discoveredAttack', 'hangingPiece', 'trappedPiece',
+  'capturingDefender', 'deflection', 'attraction', 'overloading', 'interference', 'intermezzo', 'xRayAttack',
+  'promotion', 'underPromotion', 'sacrifice', 'attackingF2F7', 'exposedKing', 'advancedPawn', 'clearance',
+]
+const rank = (k: Motif['kind']) => (PRIORITY.indexOf(k) + 1 || PRIORITY.length + 1)
+
+/** Tactical motifs of a line, most instructive first. Castling is never a "clearance". */
+function tacticsIn(fen: string, line: string[], prev?: PrevMove): Motif[] {
+  const sans = play(fen, line).sans
+  return safeMotifs(fen, line, prev)
+    .filter(x => TACTICAL_KINDS.has(x.kind) && !(x.kind === 'clearance' && /^O-O/.test(sans[x.ply] ?? '')))
+    // deep in a line only mates and material-winning patterns are worth a coach's sentence
+    .filter(x => x.ply <= 2 || /mate/i.test(x.kind) || (x.ply <= 4 && rank(x.kind) <= rank('xRayAttack')))
+    .sort((a, b) => rank(a.kind) - rank(b.kind) || a.ply - b.ply)
+}
+
+/** Describe a motif, leading in with the moves before it when it is not the first move of the line. */
+function describeInLine(mo: Motif, fens: string[], sans: string[], lang: Lang): string | null {
+  const d = (lang === 'el' ? describeMotifEl : describeMotif)(mo, fens, sans)
+  if (!d || mo.ply === 0 || /mate/i.test(mo.kind)) return d
+  const lead = sans.slice(0, mo.ply).join(' ')
+  return lang === 'el' ? TEXT_EL.ideaThen(lead, d) : `${lead}, and then ${d}`
+}
+
 /** Map a positional concept (from positional.ts) to a lesson. */
 export function conceptLesson(concept: string): string | undefined {
   const c = concept.toLowerCase()
@@ -257,9 +288,12 @@ const PHRASES: Record<Classification, string[]> = {
 
 const pick = (xs: string[], seed: number) => xs[seed % xs.length]
 
-export function coachMove(review: GameReview, index: number): CoachNote {
+export function coachMove(review: GameReview, index: number, lang: Lang = getLang()): CoachNote {
   const m = review.moves[index]
   const mover = m.color
+  const el = lang === 'el'
+  const describe = el ? describeMotifEl : describeMotif
+  const say = (c: ConceptDelta) => (el ? conceptTextEl(c, mover) : c.text)
   const tactical: string[] = []
   const strategic: string[] = []
   const lessons = new Set<string>()
@@ -271,25 +305,26 @@ export function coachMove(review: GameReview, index: number): CoachNote {
   const reply = play(m.fenAfter, m.replyLineUci)
   const before = review.moves[index - 1]
   const prevUci: PrevMove | undefined = before && { fen: before.fenBefore, uci: before.uci }
-  const missed = errored ? safeMotifs(m.fenBefore, m.bestLineUci, prevUci).filter(x => TACTICAL_KINDS.has(x.kind)) : []
-  const allowed = errored ? safeMotifs(m.fenAfter, m.replyLineUci, { fen: m.fenBefore, uci: m.uci }).filter(x => TACTICAL_KINDS.has(x.kind)) : []
+  const missed = errored ? tacticsIn(m.fenBefore, m.bestLineUci, prevUci) : []
+  const allowed = errored ? tacticsIn(m.fenAfter, m.replyLineUci, { fen: m.fenBefore, uci: m.uci }) : []
   const playedLine = good ? [m.uci, ...m.replyLineUci] : []
   const played = good && m.cls !== 'book' ? safeMotifs(m.fenBefore, playedLine, prevUci).filter(x => TACTICAL_KINDS.has(x.kind) && (x.ply === 0 || /mate/i.test(x.kind))) : []
 
-  const headline = `${pick(PHRASES[m.cls], m.ply)}`
+  const headline = pick((el ? PHRASES_EL : PHRASES)[m.cls], m.ply)
 
   if (allowed.length) {
-    const d = describeMotif(allowed[0], reply.fens, reply.sans)
-    if (d) tactical.push(`After ${m.san}, your opponent has ${asClause(d)}.`)
+    const d = describeInLine(allowed[0], reply.fens, reply.sans, lang)
+    if (d) tactical.push(el ? TEXT_EL.allowed(m.san, d) : `After ${m.san}, your opponent has ${/, and then /.test(d) ? `the line ${d}` : asClause(d)}.`)
     allowed.slice(0, 2).forEach(x => MOTIF_LESSON[x.kind] && lessons.add(MOTIF_LESSON[x.kind]!))
   }
   if (missed.length && m.bestSan) {
-    const d = describeMotif(missed[0], best.fens, best.sans)
-    if (d) tactical.push(`${m.cls === 'miss' ? 'You had a winning shot' : 'There was a tactic'}: ${d}.`)
+    const d = describeInLine(missed[0], best.fens, best.sans, lang)
+    if (d) tactical.push(el ? TEXT_EL.missed(m.cls === 'miss', d) : `${m.cls === 'miss' ? 'You had a winning shot' : 'There was a tactic'}: ${d}.`)
     missed.slice(0, 2).forEach(x => MOTIF_LESSON[x.kind] && lessons.add(MOTIF_LESSON[x.kind]!))
   }
   if (played.length) {
-    const d = describeMotif(played[0], play(m.fenBefore, playedLine).fens, play(m.fenBefore, playedLine).sans)
+    const pl = play(m.fenBefore, playedLine)
+    const d = describe(played[0], pl.fens, pl.sans)
     if (d) tactical.push(`${d}.`)
   }
 
@@ -301,26 +336,30 @@ export function coachMove(review: GameReview, index: number): CoachNote {
   const losses = mine.filter(c => c.delta < 0).filter((c, i, all) => all.findIndex(x => x.concept === c.concept) === i).slice(0, 2)
   const oppGains = theirs.filter(c => c.delta > 0).slice(0, 1)
 
-  if (good && !played.length && gains.length && !(gains.length === 1 && isMobility(gains[0]))) strategic.push(`Positionally, ${m.san} ${list(gains.map(c => c.text))}.`)
+  if (good && !played.length && gains.length && !(gains.length === 1 && isMobility(gains[0]))) strategic.push(el ? TEXT_EL.positionally(m.san, gains.map(say)) : `Positionally, ${m.san} ${list(gains.map(c => c.text))}.`)
   if (losses.length && errored && !(tactical.length && losses.every(isMobility))) {
-    strategic.push(`The cost: it ${list(losses.map(c => c.text))}.`)
+    strategic.push(el ? TEXT_EL.cost(losses.map(say)) : `The cost: it ${list(losses.map(c => c.text))}.`)
     losses.forEach(c => { const l = conceptLesson(c.concept); if (l) lessons.add(l) })
   }
-  if (oppGains.length && errored) strategic.push(`It also gives your opponent something: ${oppGains[0].text}.`)
+  if (oppGains.length && errored) strategic.push(el ? TEXT_EL.oppGives(say(oppGains[0])) : `It also gives your opponent something: ${oppGains[0].text}.`)
 
   if (errored && m.bestUci && !missed.length) {
     const afterBest = fenAfterUci(m.fenBefore, m.bestUci)
     const bestConcepts = afterBest ? safeConcepts(m.fenBefore, afterBest).filter(c => c.side === mover && c.delta > 0).slice(0, 2) : []
-    if (bestConcepts.length) strategic.push(`${m.bestSan} was the better plan: it ${list(bestConcepts.map(c => c.text))}.`)
+    if (bestConcepts.length) strategic.push(el ? TEXT_EL.betterPlan(m.bestSan!, bestConcepts.map(say)) : `${m.bestSan} was the better plan: it ${list(bestConcepts.map(c => c.text))}.`)
     bestConcepts.forEach(c => { const l = conceptLesson(c.concept); if (l) lessons.add(l) })
   }
 
   // Structure-aware plan reminder on quiet strategic mistakes.
   const structures = safeStructures(m.fenBefore)
-  if (errored && !allowed.length && !missed.length && structures.length) {
+  if (errored && !allowed.length && !missed.length && structures.length && !remindedBefore(review, index, structures[0].id)) {
     const s = structures[0]
-    const info = STRUCTURES[s.id]
-    if (info) {
+    const info = structureInfo(s.id, lang)
+    if (info && el) {
+      strategic.push(TEXT_EL.structure(info.name, s.owner === 'both' || s.owner === mover ? info.plansFor.owner : info.plansFor.opponent))
+      const l = structureLesson(s.id)
+      if (l) lessons.add(l)
+    } else if (info) {
       const side = s.owner === 'both' || s.owner === mover ? info.plansFor.owner : info.plansFor.opponent
       const nm = /^[A-Z][a-z]/.test(info.name) && !/^(Carlsbad|Maróczy|Hedgehog|Stonewall|French|King|Slav|Sicilian|Boleslavsky|Dragon|Caro)/.test(info.name) ? info.name[0].toLowerCase() + info.name.slice(1) : info.name
       strategic.push(`Remember the structure: this is ${/^[aeiou]/i.test(nm) ? 'an' : 'a'} ${nm} position. ${side}`)
@@ -329,28 +368,40 @@ export function coachMove(review: GameReview, index: number): CoachNote {
     }
   }
 
-  for (let k = 0; k < strategic.length; k++) strategic[k] = voice(strategic[k], mover)
+  if (!el) for (let k = 0; k < strategic.length; k++) strategic[k] = voice(strategic[k], mover)
 
   // Advice: the habit behind the error.
   let advice: string | undefined
   if (m.cls === 'blunder' || (m.cls === 'mistake' && allowed.length)) {
-    advice = allowed.length
+    advice = el ? (allowed.length ? TEXT_EL.adviceBlunderCheck : TEXT_EL.adviceSlowDown) : allowed.length
       ? 'Before every move, run the blunder check: after my move, what are my opponent\'s checks, captures and threats?'
       : 'Slow down at critical moments: compare your move with one or two alternatives before committing.'
     lessons.add('blunder-check')
   } else if (m.cls === 'miss') {
-    advice = 'When your opponent makes an unexpected move, stop and ask what it allowed — the move after an opponent\'s error is where games are won.'
+    advice = el ? TEXT_EL.adviceMiss : 'When your opponent makes an unexpected move, stop and ask what it allowed — the move after an opponent\'s error is where games are won.'
     lessons.add('punish-mistakes')
   } else if (m.cls === 'good' && m.bestSan) {
-    advice = `${m.bestSan} was a little more precise.`
+    advice = el ? TEXT_EL.morePrecise(m.bestSan) : `${m.bestSan} was a little more precise.`
   } else if (m.cls === 'inaccuracy' && !tactical.length && !strategic.length && m.bestSan) {
-    advice = `${m.bestSan} was a little more precise (${formatScore(m.scoreBefore)} instead of ${formatScore(m.scoreAfter)}).`
+    advice = el ? TEXT_EL.morePreciseScore(m.bestSan, formatScore(m.scoreBefore), formatScore(m.scoreAfter)) : `${m.bestSan} was a little more precise (${formatScore(m.scoreBefore)} instead of ${formatScore(m.scoreAfter)}).`
   }
 
   if (errored && !tactical.length && !strategic.length && m.bestSan) {
-    tactical.push(m.bestLineSan.length > 1 ? `${m.bestSan} was stronger: ${m.bestLineSan.slice(0, 5).join(' ')}.` : `${m.bestSan} was stronger.`)
+    if (el) tactical.push(TEXT_EL.stronger(m.bestSan, m.bestLineSan.length > 1 ? m.bestLineSan.slice(0, 5).join(' ') : undefined))
+    else tactical.push(m.bestLineSan.length > 1 ? `${m.bestSan} was stronger: ${m.bestLineSan.slice(0, 5).join(' ')}.` : `${m.bestSan} was stronger.`)
   }
   return { headline, tactical, strategic, advice, lessons: [...lessons], motifs: { missed, allowed, played }, concepts }
+}
+
+/** A coach mentions the structure's plan once: skip it if the mover already erred earlier in the same structure. */
+function remindedBefore(review: GameReview, index: number, structureId: string): boolean {
+  const mover = review.moves[index].color
+  for (let k = index - 2; k >= 0; k -= 2) {
+    const prev = review.moves[k]
+    if (prev.color !== mover || !['inaccuracy', 'mistake', 'miss', 'blunder'].includes(prev.cls)) continue
+    if (safeStructures(prev.fenBefore)[0]?.id === structureId) return true
+  }
+  return false
 }
 
 function safeStructures(fen: string): Structure[] {
@@ -374,7 +425,8 @@ export interface GameReport {
   improve: { lesson: string; why: string }[]
 }
 
-export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameReport {
+export function coachGame(review: GameReview, player: 'w' | 'b' = 'w', lang: Lang = getLang()): GameReport {
+  const el = lang === 'el'
   const mine = review.moves.filter(m => m.color === player)
   const name = player === 'w' ? review.white : review.black
   const opp = player === 'w' ? review.black : review.white
@@ -391,7 +443,8 @@ export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameRepo
     const lost = ms.reduce((a, m) => a + m.loss, 0)
     const bad = ms.filter(m => ['mistake', 'blunder', 'miss'].includes(m.cls)).length
     let text = ''
-    if (!ms.length) text = phase === 'endgame' ? 'The game was decided before an endgame.' : ''
+    if (el) text = TEXT_EL.phase(phase, acc, bad, !ms.length)
+    else if (!ms.length) text = phase === 'endgame' ? 'The game was decided before an endgame.' : ''
     else if (acc >= 90) text = `Excellent ${phase} — you played close to the engine.`
     else if (acc >= 80) text = `A solid ${phase}${bad ? ` with ${bad} slip${bad > 1 ? 's' : ''} to review` : ''}.`
     else if (acc >= 65) text = `Your ${phase} had problems: ${bad} serious error${bad === 1 ? '' : 's'}. This is the phase to work on.`
@@ -414,7 +467,7 @@ export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameRepo
     .sort((a, b) => b.count - a.count)
     .slice(0, 2)
     .map(e => {
-      const info = STRUCTURES[e.s.id]
+      const info = structureInfo(e.s.id, lang)
       const yours = e.s.owner === 'both' || e.s.owner === player
       return {
         id: e.s.id,
@@ -432,42 +485,50 @@ export function coachGame(review: GameReview, player: 'w' | 'b' = 'w'): GameRepo
     .slice(0, 5)
     .sort((a, b) => a.ply - b.ply)
     .map(m => {
-      const note = coachMove(review, m.ply - 1)
+      const note = coachMove(review, m.ply - 1, lang)
       const mineMove = m.color === player
       const detail = note.tactical[0] ?? note.strategic[0] ?? ''
       // Notes are written to the mover; for the opponent's moves, retell them from the player's side.
-      const text = mineMove ? `${note.headline} ${detail}` : opponentView(m.cls, detail)
-      return { ply: m.ply, text: `${moveNo(m)} ${m.san} (${mineMove ? 'You' : opp}) — ${text}`.trim() }
+      const text = mineMove ? `${note.headline} ${detail}` : el ? TEXT_EL.opponentView(m.cls, detail) : opponentView(m.cls, detail)
+      return { ply: m.ply, text: `${moveNo(m)} ${m.san} (${mineMove ? (el ? TEXT_EL.you : 'You') : opp}) — ${text}`.trim() }
     })
 
   // Strengths
   const strengths: string[] = []
   const count = (cls: Classification) => mine.filter(m => m.cls === cls).length
-  if (count('brilliant')) strengths.push(`You found ${count('brilliant')} brilliant move${count('brilliant') > 1 ? 's' : ''}.`)
-  if (count('great')) strengths.push(`You found the only good move ${count('great')} time${count('great') > 1 ? 's' : ''} when it mattered.`)
+  if (el && count('brilliant')) strengths.push(TEXT_EL.brilliantCount(count('brilliant')))
+  if (el && count('great')) strengths.push(TEXT_EL.greatCount(count('great')))
+  if (!el && count('brilliant')) strengths.push(`You found ${count('brilliant')} brilliant move${count('brilliant') > 1 ? 's' : ''}.`)
+  if (!el && count('great')) strengths.push(`You found the only good move ${count('great')} time${count('great') > 1 ? 's' : ''} when it mattered.`)
   const best = phases.filter(p => p.moves >= 4).sort((a, b) => b.accuracy - a.accuracy)[0]
-  if (best && best.accuracy >= 75) strengths.push(`Your strongest phase was the ${best.phase} (${best.accuracy.toFixed(0)}% accuracy).`)
-  if (!mine.some(m => m.cls === 'blunder')) strengths.push('No blunders — you kept the position under control.')
+  if (best && best.accuracy >= 75) strengths.push(el ? TEXT_EL.strongestPhase(best.phase, best.accuracy) : `Your strongest phase was the ${best.phase} (${best.accuracy.toFixed(0)}% accuracy).`)
+  if (!mine.some(m => m.cls === 'blunder')) strengths.push(el ? TEXT_EL.noBlunders : 'No blunders — you kept the position under control.')
 
   // What to improve: lessons weighted by how much each cost
   const weight = new Map<string, { w: number; why: string }>()
   for (const m of mine) {
     if (!['inaccuracy', 'mistake', 'miss', 'blunder'].includes(m.cls)) continue
-    const note = coachMove(review, m.ply - 1)
+    const note = coachMove(review, m.ply - 1, lang)
     for (const l of note.lessons) {
       const e = weight.get(l) ?? { w: 0, why: `${moveNo(m)} ${m.san}` }
       e.w += m.loss
       weight.set(l, e)
     }
   }
-  const improve = [...weight.entries()].sort((a, b) => b[1].w - a[1].w).slice(0, 3).map(([lesson, e]) => ({ lesson, why: `see ${e.why}` }))
+  const improve = [...weight.entries()].sort((a, b) => b[1].w - a[1].w).slice(0, 3).map(([lesson, e]) => ({ lesson, why: el ? TEXT_EL.see(e.why) : `see ${e.why}` }))
 
   const acc = player === 'w' ? review.accuracy.w : review.accuracy.b
   const result = review.result === '1/2-1/2' ? 'a draw' : (review.result === '1-0') === (player === 'w') ? 'a win' : review.result === '*' ? 'an unfinished game' : 'a loss'
   const turning = moments.find(x => review.moves[x.ply - 1].cls === 'blunder')
+  if (el) {
+    const resKey = review.result === '1/2-1/2' ? 'draw' : review.result === '*' ? 'unfinished' : (review.result === '1-0') === (player === 'w') ? 'win' : 'loss'
+    const lesson = improve.length ? lessonTitle(improve[0].lesson, lang) : undefined
+    const overview = TEXT_EL.overview({ name, result: resKey, opp, acc, opening: review.opening?.replace(/^[A-E]\d\d /, ''), turningMove: turning && Math.ceil(turning.ply / 2), lesson })
+    return { overview, phases, structures, moments, strengths, improve }
+  }
   const overview = `${name}, this was ${result} against ${opp} with ${acc.toFixed(1)}% accuracy${review.opening ? ` in the ${review.opening.replace(/^[A-E]\d\d /, '')}` : ''}. ` +
     (turning ? `The turning point came on move ${Math.ceil(turning.ply / 2)}. ` : '') +
-    (improve.length ? `The biggest lesson from this game: ${(lessonById(improve[0].lesson)?.title ?? improve[0].lesson).toLowerCase()}.` : 'A clean game — keep it up.')
+    (improve.length ? `The biggest lesson from this game: ${lessonTitle(improve[0].lesson, lang).toLowerCase()}.` : 'A clean game — keep it up.')
 
   return { overview, phases, structures, moments, strengths, improve }
 }
@@ -490,11 +551,10 @@ function opponentView(cls: Classification, detail: string): string {
 export const moveNo = (m: MoveReview) => `${Math.ceil(m.ply / 2)}${m.color === 'w' ? '.' : '…'}`
 
 /** One-sentence tactical explanation of a line (solver to move in `fen`), or null if no motif is found. */
-export function explainLine(fen: string, line: string[], prev?: PrevMove): string | null {
-  const motifs = safeMotifs(fen, line, prev).filter(x => TACTICAL_KINDS.has(x.kind))
+export function explainLine(fen: string, line: string[], prev?: PrevMove, lang: Lang = getLang()): string | null {
+  const motifs = tacticsIn(fen, line, prev)
   if (!motifs.length) return null
   const { fens, sans } = play(fen, line)
-  const d = describeMotif(motifs[0], fens, sans)
-  if (!d || motifs[0].ply === 0 || /mate/i.test(motifs[0].kind)) return d
-  return `the idea is ${sans.slice(0, motifs[0].ply).join(' ')}, and then ${d}`
+  const d = describeInLine(motifs[0], fens, sans, lang)
+  return d && motifs[0].ply > 0 && !/mate/i.test(motifs[0].kind) ? `${lang === 'el' ? 'η ιδέα είναι' : 'the idea is'} ${d}` : d
 }

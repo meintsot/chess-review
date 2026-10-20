@@ -5,12 +5,13 @@ import type { Key } from 'chessground/types'
 import { Board } from './Board'
 import { EvalBar, EvalGraph } from './EvalViews'
 import { Badge } from './Badge'
-import { CLASS_INFO, SUMMARY_ORDER, badgeSvg } from '../lib/classes'
+import { CLASS_INFO, SUMMARY_ORDER, badgeSvg, classText } from '../lib/classes'
 import type { GameReview, MoveReview } from '../lib/review'
 import { formatScore } from '../lib/score'
 import { coachMove } from '../lib/coach'
-import { lessonById } from '../content/lessons'
+import { lessonTitle } from '../content/lessons'
 import { GameReportPanel } from './GameReportPanel'
+import { tr, useLang } from '../i18n'
 
 interface Preview {
   fens: string[]
@@ -26,6 +27,7 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
   onLesson: (id: string) => void
   onPractice: (id?: string) => void
 }) {
+  const lang = useLang()
   const total = review.moves.length
   const [ply, setPly] = useState(0)
   const [tab, setTab] = useState<'moves' | 'report'>('moves')
@@ -94,6 +96,8 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
   const wc = counts('w')
   const bc = counts('b')
   const keyMoments = review.moves.filter(m => ['blunder', 'mistake', 'miss', 'brilliant', 'great'].includes(m.cls))
+  const accLabel = tr({ en: 'Accuracy', el: 'Ακρίβεια' }, lang)
+  const ratingLabel = tr({ en: 'Game rating', el: 'Βαθμολογία παρτίδας' }, lang)
 
   const top = orientation === 'white' ? 'b' : 'w'
   const playerLine = (c: 'w' | 'b') => (
@@ -114,22 +118,22 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
         </div>
         {playerLine(top === 'w' ? 'b' : 'w')}
         <div className="nav">
-          <button onClick={() => go(0)} aria-label="First move">⏮</button>
-          <button onClick={() => go(ply - 1)} aria-label="Previous move">◀</button>
-          <button onClick={() => go(ply + 1)} aria-label="Next move">▶</button>
-          <button onClick={() => go(total)} aria-label="Last move">⏭</button>
-          <button onClick={() => setOrientation(o => (o === 'white' ? 'black' : 'white'))} aria-label="Flip board">⇅</button>
+          <button onClick={() => go(0)} aria-label={tr({ en: 'First move', el: 'Πρώτη κίνηση' }, lang)}>⏮</button>
+          <button onClick={() => go(ply - 1)} aria-label={tr({ en: 'Previous move', el: 'Προηγούμενη κίνηση' }, lang)}>◀</button>
+          <button onClick={() => go(ply + 1)} aria-label={tr({ en: 'Next move', el: 'Επόμενη κίνηση' }, lang)}>▶</button>
+          <button onClick={() => go(total)} aria-label={tr({ en: 'Last move', el: 'Τελευταία κίνηση' }, lang)}>⏭</button>
+          <button onClick={() => setOrientation(o => (o === 'white' ? 'black' : 'white'))} aria-label={tr({ en: 'Flip board', el: 'Αναστροφή σκακιέρας' }, lang)}>⇅</button>
         </div>
       </section>
 
       <section className="panel">
         <div className="panel-head">
-          <button className="link" onClick={onBack}>← New game</button>
+          <button className="link" onClick={onBack}>{tr({ en: '← New game', el: '← Νέα παρτίδα' }, lang)}</button>
           <span className="muted">{review.opening?.replace(/^[A-E]\d\d /, '') ?? ''}</span>
         </div>
         <div className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'moves'} className={tab === 'moves' ? 'on' : ''} onClick={() => setTab('moves')}>Moves</button>
-          <button role="tab" aria-selected={tab === 'report'} className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')}>Coach report</button>
+          <button role="tab" aria-selected={tab === 'moves'} className={tab === 'moves' ? 'on' : ''} onClick={() => setTab('moves')}>{tr({ en: 'Moves', el: 'Κινήσεις' }, lang)}</button>
+          <button role="tab" aria-selected={tab === 'report'} className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')}>{tr({ en: 'Coach report', el: 'Αναφορά προπονητή' }, lang)}</button>
         </div>
 
         {tab === 'report' ? (
@@ -151,15 +155,15 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
 
         <div className="summary">
           <div className="acc-row">
-            <div className="acc w"><span className="acc-num">{review.accuracy.w.toFixed(1)}</span><span className="muted">Accuracy · {short(review.white)}</span><span className="grating">Game rating <b>{review.gameRating.w}</b></span></div>
-            <div className="acc b"><span className="acc-num">{review.accuracy.b.toFixed(1)}</span><span className="muted">Accuracy · {short(review.black)}</span><span className="grating">Game rating <b>{review.gameRating.b}</b></span></div>
+            <div className="acc w"><span className="acc-num">{review.accuracy.w.toFixed(1)}</span><span className="muted">{accLabel} · {short(review.white)}</span><span className="grating">{ratingLabel} <b>{review.gameRating.w}</b></span></div>
+            <div className="acc b"><span className="acc-num">{review.accuracy.b.toFixed(1)}</span><span className="muted">{accLabel} · {short(review.black)}</span><span className="grating">{ratingLabel} <b>{review.gameRating.b}</b></span></div>
           </div>
           <table className="counts">
             <tbody>
               {SUMMARY_ORDER.map(cls => (
                 <tr key={cls} className={(wc[cls] ?? 0) + (bc[cls] ?? 0) === 0 ? 'zero' : ''}>
                   <td className="n" style={{ color: CLASS_INFO[cls].color }}>{wc[cls] ?? 0}</td>
-                  <td className="lbl"><Badge cls={cls} size={20} /> {CLASS_INFO[cls].label}</td>
+                  <td className="lbl"><Badge cls={cls} size={20} /> {classText(cls, lang).label}</td>
                   <td className="n" style={{ color: CLASS_INFO[cls].color }}>{bc[cls] ?? 0}</td>
                 </tr>
               ))}
@@ -167,7 +171,7 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
           </table>
           {keyMoments.length > 0 && (
             <div className="moments">
-              <h3>Key moments</h3>
+              <h3>{tr({ en: 'Key moments', el: 'Κρίσιμες στιγμές' }, lang)}</h3>
               {keyMoments.map(m => (
                 <button key={m.ply} className={`moment${m.ply === ply ? ' on' : ''}`} onClick={() => go(m.ply)}>
                   <Badge cls={m.cls} size={18} /> {moveNo(m)} {m.san}
@@ -175,7 +179,7 @@ export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
               ))}
             </div>
           )}
-          <p className="muted small">Stockfish 18 (lite) · depth {review.depth}</p>
+          <p className="muted small">Stockfish 18 (lite) · {tr({ en: 'depth', el: 'βάθος' }, lang)} {review.depth}</p>
         </div>
         </>)}
       </section>
@@ -195,15 +199,19 @@ function Coach({ move, review, preview, onLine, onPreviewIndex, onExit, onLesson
   onPreviewIndex: (i: number) => void
   onExit: () => void
 }) {
+  const lang = useLang()
   if (!move) {
     return (
       <div className="coach">
-        <div className="coach-title">Game review</div>
-        <p>{review.white} vs {review.black} · {review.result}. Step through with ▶ or the arrow keys — each move gets a verdict and an explanation.</p>
+        <div className="coach-title">{tr({ en: 'Game review', el: 'Ανάλυση παρτίδας' }, lang)}</div>
+        <p>{tr({
+          en: `${review.white} vs ${review.black} · ${review.result}. Step through with ▶ or the arrow keys — each move gets a verdict and an explanation.`,
+          el: `${review.white} εναντίον ${review.black} · ${review.result}. Προχώρα με το ▶ ή με τα βελάκια — κάθε κίνηση παίρνει αξιολόγηση και εξήγηση.`,
+        }, lang)}</p>
       </div>
     )
   }
-  const info = CLASS_INFO[move.cls]
+  const info = { ...CLASS_INFO[move.cls], ...classText(move.cls, lang) }
   const lineSans = move.bestLineSan
   const showBestLine = !['book', 'forced'].includes(move.cls) && lineSans.length > 0
   const reply = move.replyLineSan
@@ -218,24 +226,26 @@ function Coach({ move, review, preview, onLine, onPreviewIndex, onExit, onLesson
       <CoachNoteView review={review} move={move} onLesson={onLesson} />
       {preview ? (
         <div className="line">
-          <span className="muted">Exploring line:</span>
+          <span className="muted">{tr({ en: 'Exploring line:', el: 'Εξερεύνηση βαριάντας:' }, lang)}</span>
           {preview.sans.map((s, i) => (
             <button key={i} className={`chip${preview.index === i + 1 ? ' on' : ''}`} onClick={() => onPreviewIndex(i + 1)}>{s}</button>
           ))}
-          <button className="link" onClick={onExit}>back to game ✕</button>
+          <button className="link" onClick={onExit}>{tr({ en: 'back to game ✕', el: 'πίσω στην παρτίδα ✕' }, lang)}</button>
         </div>
       ) : (
         <div className="line">
           {showBestLine && (
             <>
-              <span className="muted">Best line:</span>
+              <span className="muted">{tr({ en: 'Best line:', el: 'Καλύτερη βαριάντα:' }, lang)}</span>
               {lineSans.slice(0, 8).map((s, i) => (
                 <button key={i} className="chip" onClick={() => onLine(move.fenBefore, lineSans.slice(0, 8), i + 1)}>{s}</button>
               ))}
             </>
           )}
           {reply.length > 0 && !['book', 'forced', 'best'].includes(move.cls) && !new Chess(move.fenAfter).isGameOver() && (
-            <button className="link" onClick={() => onLine(move.fenAfter, reply.slice(0, 8), 1)}>{['brilliant', 'great', 'excellent', 'good'].includes(move.cls) ? 'see the follow-up' : `see why ${move.san} is bad`} →</button>
+            <button className="link" onClick={() => onLine(move.fenAfter, reply.slice(0, 8), 1)}>{['brilliant', 'great', 'excellent', 'good'].includes(move.cls)
+              ? tr({ en: 'see the follow-up', el: 'δες τη συνέχεια' }, lang)
+              : tr({ en: `see why ${move.san} is bad`, el: `δες γιατί το ${move.san} είναι κακό` }, lang)} →</button>
           )}
         </div>
       )}
@@ -272,18 +282,19 @@ function MoveList({ review, ply, onSelect }: { review: GameReview; ply: number; 
 }
 
 function CoachNoteView({ review, move, onLesson }: { review: GameReview; move: MoveReview; onLesson: (id: string) => void }) {
-  const note = useMemo(() => coachMove(review, move.ply - 1), [review, move])
+  const lang = useLang()
+  const note = useMemo(() => coachMove(review, move.ply - 1, lang), [review, move, lang])
   const body = [...note.tactical, ...note.strategic]
   return (
     <div className="coach-note">
-      <p><strong>{note.headline}</strong> {body.length ? body[0] : move.comment}</p>
+      <p><strong>{note.headline}</strong> {body.length ? body[0] : lang === 'en' ? move.comment : ''}</p>
       {body.slice(1).map((t, i) => <p key={i}>{t}</p>)}
       {note.advice && <p className="advice">💡 {note.advice}</p>}
       {note.lessons.length > 0 && (
         <div className="line">
-          <span className="muted">Learn:</span>
+          <span className="muted">{tr({ en: 'Learn:', el: 'Μάθε:' }, lang)}</span>
           {note.lessons.slice(0, 3).map(l => (
-            <button key={l} className="chip" onClick={() => onLesson(l)}>{lessonById(l)?.title ?? l}</button>
+            <button key={l} className="chip" onClick={() => onLesson(l)}>{lessonTitle(l, lang)}</button>
           ))}
         </div>
       )}

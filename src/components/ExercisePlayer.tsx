@@ -4,13 +4,15 @@ import type { DrawShape } from 'chessground/draw'
 import type { Key } from 'chessground/types'
 import { Board } from './Board'
 import { exerciseEngine as engine } from '../lib/exerciseEngine'
-import { conceptDeltas } from '../lib/positional'
+import { conceptDeltas, type ConceptDelta } from '../lib/positional'
+import { conceptTextEl } from '../lib/positional.el'
 import { explainLine, voice } from '../lib/coach'
-import { lessonById } from '../content/lessons'
+import { localizedLesson } from '../content/lessons'
 import { recordAttempt } from '../lib/progress'
 import type { Exercise } from '../lib/training'
 import { structuresIn } from '../lib/training'
-import { STRUCTURES } from '../lib/structures'
+import { structureInfo } from '../lib/structures'
+import { tr, useLang, type Lang } from '../i18n'
 
 
 const sanOf = (fen: string, uci: string) => {
@@ -27,27 +29,38 @@ const fenAfter = (fen: string, uci: string) => {
 }
 const arrow = (uci: string, brush: string): DrawShape => ({ orig: uci.slice(0, 2) as Key, dest: uci.slice(2, 4) as Key, brush })
 
+/** Concept change as a verb phrase from the mover's point of view ("improves your bishop"). */
+const conceptText = (c: ConceptDelta, mover: 'w' | 'b', lang: Lang) => (lang === 'el' ? conceptTextEl(c, mover) : c.text)
+
 /** Plain-language reasons why `uci` is good in `fen`: tactics in the line plus positional gains. */
-function explainMove(fen: string, uci: string, line: string[] = []): string[] {
+function explainMove(fen: string, uci: string, line: string[], lang: Lang): string[] {
   const out: string[] = []
   const side = fen.split(' ')[1] as 'w' | 'b'
-  const tactic = explainLine(fen, [uci, ...line])
+  const tactic = explainLine(fen, [uci, ...line], undefined, lang)
   if (tactic) out.push(`${tactic[0].toUpperCase() === tactic[0] || /^[a-h]/.test(tactic) ? tactic : tactic[0].toUpperCase() + tactic.slice(1)}.`)
   try {
     const gains = conceptDeltas(fen, fenAfter(fen, uci)).filter(c => c.side === side && c.delta > 0 && !/mobility/i.test(c.concept)).slice(0, 2)
-    if (gains.length && !tactic) out.push(voice(`Positionally it ${gains.map(g => g.text).join(' and ')}.`, side))
+    if (gains.length && !tactic) {
+      out.push(lang === 'el'
+        ? `Θεσιακά, η κίνηση ${gains.map(g => conceptText(g, side, lang)).join(' και ')}.`
+        : voice(`Positionally it ${gains.map(g => g.text).join(' and ')}.`, side))
+    }
   } catch {
     // ignore
   }
   return out
 }
 
+/** Own-game notes saved before Greek notes existed: translate at least the lead-in. */
+const localNote = (note: string, lang: Lang) => (lang === 'el' ? note.replace(/^In your game you played (\S+)\./, 'Στην παρτίδα σου έπαιξες $1.') : note)
+
 type State =
   | { stage: 'playing' }
   | { stage: 'checking' }
-  | { stage: 'done'; success: boolean; points?: number; best: string; played?: string; notes: string[] }
+  | { stage: 'done'; success: boolean; points?: number; best: string; played?: string; notes: (lang: Lang) => string[] }
 
 export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNext: (success: boolean) => void }) {
+  const lang = useLang()
   const isPuzzle = exercise.kind === 'puzzle'
   // Lichess puzzles start one move earlier: the opponent's move is played automatically.
   const [fen, setFen] = useState(exercise.fen)
@@ -97,7 +110,7 @@ export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNex
         if (next >= exercise.moves.length || mates) {
           // Explain the whole solution from the position the solver faced, not just the last move.
           const start = fenAfter(exercise.fen, exercise.moves[0])
-          const notes = explainMove(start, exercise.moves[1], exercise.moves.slice(2))
+          const notes = (l: Lang) => explainMove(start, exercise.moves[1], exercise.moves.slice(2), l)
           finish(true, { best: sanOf(fen, expected), played: sanOf(fen, uci), notes })
           return
         }
@@ -110,7 +123,7 @@ export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNex
         setStep(next)
       } else {
         setShapes([arrow(expected, 'green'), arrow(uci, 'red')])
-        finish(false, { best: sanOf(fen, expected), played: sanOf(fen, uci), notes: explainMove(fen, expected, exercise.moves.slice(step + 1)) })
+        finish(false, { best: sanOf(fen, expected), played: sanOf(fen, uci), notes: l => explainMove(fen, expected, exercise.moves.slice(step + 1), l) })
       }
       return
     }
@@ -135,32 +148,45 @@ export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNex
     setFen(fenAfter(fen, uci))
     setLast([uci.slice(0, 2), uci.slice(2, 4)])
     setShapes(uci === bestUci ? [] : [arrow(bestUci, 'green')])
-    const notes = explainMove(fen, bestUci)
     const side = fen.split(' ')[1] as 'w' | 'b'
+    let worse: ConceptDelta | undefined
     if (uci !== bestUci) {
       try {
-        const worse = conceptDeltas(fen, fenAfter(fen, uci)).filter(c => c.side === side && c.delta < 0 && !/mobility/i.test(c.concept)).slice(0, 1)
-        if (worse.length) notes.push(voice(`Your move ${sanOf(fen, uci)} ${worse[0].text}.`, side))
+        worse = conceptDeltas(fen, fenAfter(fen, uci)).filter(c => c.side === side && c.delta < 0 && !/mobility/i.test(c.concept))[0]
       } catch {
         // best-effort
       }
     }
-    // Structure exercises: remind the plan for this side of the structure.
     const s0 = structuresIn(fen)[0]
-    const info = s0 && STRUCTURES[s0.id]
-    if (info) notes.push(`${info.name}: ${s0.owner === 'both' || s0.owner === side ? info.plansFor.owner : info.plansFor.opponent}`)
-    if (exercise.note) notes.push(exercise.note)
+    const note = exercise.note
+    const notes = (l: Lang) => {
+      const out = explainMove(fen, bestUci, [], l)
+      if (worse) {
+        out.push(l === 'el'
+          ? `Η κίνησή σου ${sanOf(fen, uci)} ${conceptText(worse, side, l)}.`
+          : voice(`Your move ${sanOf(fen, uci)} ${worse.text}.`, side))
+      }
+      // Structure exercises: remind the plan for this side of the structure.
+      const info = s0 && structureInfo(s0.id, l)
+      if (info) out.push(`${info.name}: ${s0.owner === 'both' || s0.owner === side ? info.plansFor.owner : info.plansFor.opponent}`)
+      if (l === 'el' && exercise.kind === 'choice' && exercise.noteEl) out.push(exercise.noteEl)
+      else if (note) out.push(localNote(note, l))
+      return out
+    }
     finish(success, { points, best: sanOf(fen, bestUci), played: sanOf(fen, uci), notes })
   }
 
-  const lesson = exercise.lesson ? lessonById(exercise.lesson) : undefined
+  const lesson = exercise.lesson ? localizedLesson(exercise.lesson, lang) : undefined
   const structures = structuresIn(exercise.fen)
+  const ownGame = exercise.title === 'From your game'
+  const notes = useMemo(() => (state.stage === 'done' ? state.notes(lang) : []), [state, lang])
   const toMove = solverColor === 'w' ? 'White' : 'Black'
+  const toMoveEl = solverColor === 'w' ? 'Παίζουν τα λευκά' : 'Παίζουν τα μαύρα'
   const prompt = isPuzzle
-    ? `${toMove} to move — find the best continuation.`
-    : exercise.title === 'From your game'
-      ? `${toMove} to move. In your game you went wrong here — find the engine's move.`
-      : `${toMove} to move — find the strongest plan.`
+    ? tr({ en: `${toMove} to move — find the best continuation.`, el: `${toMoveEl} — βρες την καλύτερη συνέχεια.` }, lang)
+    : ownGame
+      ? tr({ en: `${toMove} to move. In your game you went wrong here — find the engine's move.`, el: `${toMoveEl}. Σε αυτή τη θέση έκανες λάθος στην παρτίδα σου — βρες την κίνηση της μηχανής.` }, lang)
+      : tr({ en: `${toMove} to move — find the strongest plan.`, el: `${toMoveEl} — βρες το ισχυρότερο σχέδιο.` }, lang)
 
   return (
     <div className="exercise" data-fen={fen}>
@@ -176,30 +202,41 @@ export function ExercisePlayer({ exercise, onNext }: { exercise: Exercise; onNex
       </div>
       <div className="exercise-side">
         <div className="ex-title">
-          <span className="pill on">{exercise.kind === 'puzzle' ? 'Tactics' : exercise.title === 'From your game' ? 'Your game' : 'Strategy'}</span>
+          <span className="pill on">{exercise.kind === 'puzzle'
+            ? tr({ en: 'Tactics', el: 'Τακτική' }, lang)
+            : ownGame ? tr({ en: 'Your game', el: 'Η παρτίδα σου' }, lang) : tr({ en: 'Strategy', el: 'Στρατηγική' }, lang)}</span>
           {exercise.rating > 0 && <span className="muted small">≈{exercise.rating}</span>}
         </div>
         <p className="ex-prompt">{prompt}</p>
         {structures.length > 0 && (
-          <p className="muted small">Structure: {structures.map(s => STRUCTURES[s.id]?.name ?? s.name).join(', ')}</p>
+          <p className="muted small">
+            {tr({ en: 'Structure', el: structures.length > 1 ? 'Δομές' : 'Δομή' }, lang)}: {structures.map(s => structureInfo(s.id, lang)?.name ?? s.name).join(', ')}
+          </p>
         )}
-        {state.stage === 'checking' && <p className="muted">Checking your move with Stockfish…</p>}
+        {state.stage === 'checking' && <p className="muted">{tr({ en: 'Checking your move with Stockfish…', el: 'Ελέγχω την κίνησή σου με το Stockfish…' }, lang)}</p>}
         {state.stage === 'done' && (
           <div className={`ex-result ${state.success ? 'ok' : 'bad'}`}>
-            <strong>{state.success ? (state.points !== undefined && state.points < 10 ? `Good — ${state.points}/10` : 'Correct!') : 'Not quite.'}</strong>
-            {!state.success && <span> The key move was <b>{state.best}</b>{state.played ? ` (you played ${state.played})` : ''}.</span>}
-            {state.success && state.played !== state.best && state.best && <span> The engine's top choice was <b>{state.best}</b>.</span>}
-            {state.notes.map((n, i) => <p key={i}>{n}</p>)}
-            {lesson && <p className="muted small">Lesson: {lesson.title} — {lesson.summary}</p>}
-            <button className="primary" onClick={() => onNext(state.success)}>Next →</button>
+            <strong>{state.success
+              ? (state.points !== undefined && state.points < 10 ? tr({ en: `Good — ${state.points}/10`, el: `Καλή κίνηση — ${state.points}/10` }, lang) : tr({ en: 'Correct!', el: 'Σωστά!' }, lang))
+              : tr({ en: 'Not quite.', el: 'Όχι ακριβώς.' }, lang)}</strong>
+            {!state.success && (lang === 'el'
+              ? <span> Η σωστή κίνηση ήταν το <b>{state.best}</b>{state.played ? ` (εσύ έπαιξες ${state.played})` : ''}.</span>
+              : <span> The key move was <b>{state.best}</b>{state.played ? ` (you played ${state.played})` : ''}.</span>)}
+            {state.success && state.played !== state.best && state.best && (lang === 'el'
+              ? <span> Η πρώτη επιλογή της μηχανής ήταν το <b>{state.best}</b>.</span>
+              : <span> The engine's top choice was <b>{state.best}</b>.</span>)}
+            {notes.map((n, i) => <p key={i}>{n}</p>)}
+            {lesson && <p className="muted small">{tr({ en: 'Lesson', el: 'Μάθημα' }, lang)}: {lesson.title} — {lesson.summary}</p>}
+            <button className="primary" onClick={() => onNext(state.success)}>{tr({ en: 'Next →', el: 'Επόμενη →' }, lang)}</button>
           </div>
         )}
         {state.stage === 'playing' && (
           <button className="link" onClick={() => {
             const best = exercise.kind === 'puzzle' ? exercise.moves[step] : exercise.answers[0][0]
+            const rest = exercise.kind === 'puzzle' ? exercise.moves.slice(step + 1) : []
             setShapes([arrow(best, 'green')])
-            finish(false, { best: sanOf(fen, best), notes: explainMove(fen, best, exercise.kind === 'puzzle' ? exercise.moves.slice(step + 1) : []) })
-          }}>Show solution</button>
+            finish(false, { best: sanOf(fen, best), notes: l => explainMove(fen, best, rest, l) })
+          }}>{tr({ en: 'Show solution', el: 'Δείξε τη λύση' }, lang)}</button>
         )}
       </div>
     </div>

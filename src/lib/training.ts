@@ -69,14 +69,17 @@ export function ownExercises(review: GameReview, color: 'w' | 'b'): OwnExercise[
     .filter(m => m.color === color && ['mistake', 'miss', 'blunder'].includes(m.cls) && m.bestUci)
     .slice(0, 6)
     .map(m => {
-      const note = coachMove(review, m.ply - 1)
+      const note = coachMove(review, m.ply - 1, 'en')
+      const el = coachMove(review, m.ply - 1, 'el')
       const text = [note.tactical[0], note.strategic[0]].filter(Boolean).join(' ')
+      const textEl = [el.tactical[0], el.strategic[0]].filter(Boolean).join(' ')
       return {
         id: `${id}-${m.ply}`,
         fen: m.fenBefore,
         answers: [[m.bestUci!, 10]],
         lesson: note.lessons[0],
         note: `In your game you played ${m.san}. ${text}`.trim(),
+        noteEl: `Στην παρτίδα σου έπαιξες ${m.san}. ${textEl}`.trim(),
         game: id,
         ply: m.ply,
       }
@@ -87,7 +90,7 @@ export function ownExercises(review: GameReview, color: 'w' | 'b'): OwnExercise[
 
 export type Exercise =
   | { kind: 'puzzle'; id: string; fen: string; moves: string[]; rating: number; themes: string[]; lesson?: string; title: string }
-  | { kind: 'choice'; id: string; fen: string; answers: [string, number][]; rating: number; lesson?: string; title: string; note?: string; engineCheck?: boolean }
+  | { kind: 'choice'; id: string; fen: string; answers: [string, number][]; rating: number; lesson?: string; title: string; note?: string; noteEl?: string; engineCheck?: boolean }
 
 type PuzzleRow = [string, string, string, number, string]
 interface StrategicRow { id: string; theme?: string; structure?: string; fen: string; answers: [string, number][]; difficulty: number | null; structures?: string[] }
@@ -154,7 +157,7 @@ export async function exercisesFor(lessonId: string, rating: number, count: numb
 }
 
 function ownToExercise(e: OwnExercise): Exercise {
-  return { kind: 'choice', id: `own:${e.id}`, fen: e.fen, answers: e.answers, rating: 0, lesson: e.lesson, title: 'From your game', note: e.note, engineCheck: true }
+  return { kind: 'choice', id: `own:${e.id}`, fen: e.fen, answers: e.answers, rating: 0, lesson: e.lesson, title: 'From your game', note: e.note, noteEl: e.noteEl, engineCheck: true }
 }
 
 /** The positions where the player went wrong in one reviewed game. */

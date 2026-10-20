@@ -1,3 +1,4 @@
+import { STRUCTURES_EL } from './structures.el'
 // Named pawn structures, classified exactly as specified in docs/structures.md (shared with the Python
 // data pipeline). Rules look only at pawns; each rule is written for White and its mirror (ranks
 // flipped, colours swapped) is applied for Black. A position can match several structures.
@@ -177,7 +178,7 @@ export const STRUCTURES: Record<string, { name: string; summary: string; plansFo
     name: 'Stonewall',
     summary: 'White pawns on c3, d4, e3 and f4 form a wall on the dark squares. The e5 square is a strong outpost and the structure supports a kingside attack, but e4 is a hole and the c1 bishop is often bad.',
     plansFor: {
-      owner: 'Plant a knight on e5, bring the queen and rook to the kingside (Rf3-h3, Qf3) and attack; activate or trade off the light-squared problem bishop.',
+      owner: 'Plant a knight on e5, bring the queen and rook to the kingside (Rf3-h3, Qf3) and attack; activate or trade off the problem bishop on c1, hemmed in by its own pawns.',
       opponent: 'Occupy e4 with a knight, trade the strong dark-squared bishop or the e5 knight, and open the queenside with ...c5 and ...b5, where the wall does not help.',
     },
   },
@@ -245,4 +246,9 @@ export const STRUCTURES: Record<string, { name: string; summary: string; plansFo
       opponent: 'Attack on the wing your pawn chain points to with pawn breaks (c- or f-pawn), and reroute pieces to that side; keep the centre closed while you are not ready.',
     },
   },
+}
+
+/** Structure name, summary and plans in the current language. */
+export function structureInfo(id: string, lang: 'en' | 'el' = 'en') {
+  return (lang === 'el' ? STRUCTURES_EL[id] : undefined) ?? STRUCTURES[id]
 }

@@ -4,6 +4,7 @@
 import { coachGame, coachMove, moveNo } from './coach'
 import type { GameReview } from './review'
 import { formatScore } from './score'
+import { getLang, tr } from '../i18n'
 
 const KEY = 'chess-review.anthropic-key'
 
@@ -39,12 +40,13 @@ Format (Markdown):
 
 /** Compact, verified fact sheet for one game from the student's point of view. */
 export function factSheet(review: GameReview, player: 'w' | 'b', language?: string) {
-  const report = coachGame(review, player)
+  const lang = language === 'Greek' ? 'el' : language === 'English' ? 'en' : getLang()
+  const report = coachGame(review, player, lang)
   const keyPlies = new Set(report.moments.map(m => m.ply))
   review.moves.filter(m => m.color === player && ['mistake', 'blunder', 'miss'].includes(m.cls)).forEach(m => keyPlies.add(m.ply))
   const moments = [...keyPlies].sort((a, b) => a - b).slice(0, 8).map(ply => {
     const m = review.moves[ply - 1]
-    const note = coachMove(review, ply - 1)
+    const note = coachMove(review, ply - 1, lang)
     return {
       move: `${moveNo(m)} ${m.san}`,
       by: m.color === player ? 'student' : 'opponent',
@@ -60,7 +62,7 @@ export function factSheet(review: GameReview, player: 'w' | 'b', language?: stri
     }
   })
   return {
-    language: language ?? 'English',
+    language: language ?? (lang === 'el' ? 'Greek' : 'English'),
     student: player === 'w' ? review.white : review.black,
     opponent: player === 'w' ? review.black : review.white,
     studentColor: player === 'w' ? 'White' : 'Black',
@@ -77,15 +79,18 @@ export function factSheet(review: GameReview, player: 'w' | 'b', language?: stri
   }
 }
 
-/** Streams the AI coach's narrative. Calls `onText` with the text so far. */
-export async function askAiCoach(review: GameReview, player: 'w' | 'b', onText: (text: string) => void, language?: string, signal?: AbortSignal) {
+/** Streams the AI coach's narrative. Calls `onText` with the text so far. `client` is only for tests (mock server). */
+export async function askAiCoach(
+  review: GameReview, player: 'w' | 'b', onText: (text: string) => void, language?: string, signal?: AbortSignal,
+  client?: { baseURL?: string; maxRetries?: number },
+) {
   const apiKey = getApiKey()
-  if (!apiKey) throw new Error('Add your Anthropic API key in Profile → AI coach first.')
+  if (!apiKey) throw new Error(tr({ en: 'Add your Anthropic API key in Profile → AI coach first.', el: 'Πρόσθεσε πρώτα το κλειδί Anthropic API στο Προφίλ → AI προπονητής.' }))
   const { default: Anthropic } = await import('@anthropic-ai/sdk')
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+  const api = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, ...client })
   const facts = factSheet(review, player, language)
   let text = ''
-  const stream = client.beta.messages.stream(
+  const stream = api.beta.messages.stream(
     {
       model: 'claude-opus-5-5',
       max_tokens: 16000,
@@ -103,6 +108,6 @@ export async function askAiCoach(review: GameReview, player: 'w' | 'b', onText: 
     onText(text)
   })
   const final = await stream.finalMessage()
-  if (final.stop_reason === 'refusal') throw new Error('The AI coach declined this request.')
+  if (final.stop_reason === 'refusal') throw new Error(tr({ en: 'The AI coach declined this request.', el: 'Ο AI προπονητής αρνήθηκε αυτό το αίτημα.' }))
   return text
 }

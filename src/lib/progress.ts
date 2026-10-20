@@ -25,6 +25,7 @@ export interface OwnExercise {
   answers: [string, number][] // uci, points (10 = best)
   lesson?: string
   note: string // coach text shown after solving
+  noteEl?: string // the same note in Greek
   game: string // game id
   ply: number
 }

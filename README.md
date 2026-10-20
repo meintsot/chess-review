@@ -30,6 +30,8 @@ your progress stays in your browser (export/import available).
   Hedgehog, French/KID chains, Sicilian structures…), endgames and habits, each linked to exercises.
 - **AI coach (optional)** — bring your own Anthropic API key (stored only in your browser) and Claude writes a
   narrative review of the game from the verified analysis only.
+- **English and Greek** — the whole app, including every coach explanation, lesson and structure plan
+  (toggle ΕΛ / EN in the top bar; the browser language is the default).
 
 ## How it works
 
@@ -40,9 +42,9 @@ your progress stays in your browser (export/import available).
 | Tactical motifs (port of the Lichess puzzle tagger) | `src/lib/motifs.ts` |
 | Positional features (port of Stockfish's classical evaluation terms) | `src/lib/positional.ts` |
 | Pawn structures (spec in `docs/structures.md`) | `src/lib/structures.ts` |
-| Coach text | `src/lib/coach.ts` |
+| Coach text (English / Greek) | `src/lib/coach.ts`, `coach.el.ts`, `positional.el.ts`, `structures.el.ts` |
 | Training, progress, spaced repetition | `src/lib/training.ts`, `progress.ts` |
-| Lessons | `src/content/lessons.ts` |
+| Lessons | `src/content/lessons.ts`, `lessons.el.ts` |
 | AI coach (bring your own key) | `src/lib/aiCoach.ts` |
 
 ### Calibration against chess.com
@@ -53,6 +55,15 @@ Measured on two independent sets of chess.com Game Reviews (~120 games, ~7,500 m
   engine-vs-engine noise. chess.com's published thresholds (.02/.05/.10/.20) come out as the best fit.
 - Accuracy: bias ≈ −0.2, RMSE ≈ 4 points (forced moves excluded, as chess.com does). Game rating: RMSE ≈ 160–170.
 - Displayed evals use chess.com's scale: 748·tanh(cp/748).
+- The rare labels agree less: Great ≈ 40–55% and Miss ≈ 55–60% of chess.com's are reproduced, Brilliant about 3 in 8.
+  They hinge on small eval differences between the second-best and best move, where two engines disagree most.
+
+### Coach quality
+`npx tsx scripts/audit-coach.ts <games.json> <analysis.json> [en|el]` checks the coach on real games. On 40 games
+(2,547 moves, 523 errors): 93% of errors get a specific tactical or positional explanation (the rest show the
+engine line); every piece-on-square claim is checked against the board (1,125 in English, 492 in Greek, 0 wrong);
+every fork is checked geometrically (0 wrong); no English words or grammar slips in the Greek text.
+The AI coach is tested against a local mock of the Messages API (streaming, refusal, API error, cancel).
 
 Re-run the comparison with `npx tsx scripts/calibrate.ts <games.json> <analysis.json> <labels.json>`.
 
