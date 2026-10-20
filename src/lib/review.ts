@@ -23,7 +23,9 @@ export interface MoveReview {
   bestUci?: string
   bestSan?: string
   bestLineSan: string[]
+  bestLineUci: string[]
   replyLineSan: string[] // opponent's best continuation after the move
+  replyLineUci: string[]
   winBefore: number // mover's expected score %, rating-aware
   winAfter: number
   loss: number // expected points lost, 0..1
@@ -271,7 +273,9 @@ export function buildReview(pgn: string, results: EngineResult[], book: Record<s
       bestUci,
       bestSan: bestLineSan[0],
       bestLineSan,
+      bestLineUci: (res?.lines[0]?.pv ?? []).slice(0, 10),
       replyLineSan,
+      replyLineUci: replyPv.slice(0, 10),
       winBefore: epBefore * 100,
       winAfter: epAfter * 100,
       loss,

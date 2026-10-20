@@ -8,6 +8,9 @@ import { Badge } from './Badge'
 import { CLASS_INFO, SUMMARY_ORDER, badgeSvg } from '../lib/classes'
 import type { GameReview, MoveReview } from '../lib/review'
 import { formatScore } from '../lib/score'
+import { coachMove } from '../lib/coach'
+import { lessonById } from '../content/lessons'
+import { GameReportPanel } from './GameReportPanel'
 
 interface Preview {
   fens: string[]
@@ -16,10 +19,17 @@ interface Preview {
   index: number // 0..sans.length (0 = position before the line)
 }
 
-export function ReviewView({ review, onBack }: { review: GameReview; onBack: () => void }) {
+export function ReviewView({ review, onBack, player, onLesson, onPractice }: {
+  review: GameReview
+  onBack: () => void
+  player?: 'w' | 'b'
+  onLesson: (id: string) => void
+  onPractice: (id?: string) => void
+}) {
   const total = review.moves.length
   const [ply, setPly] = useState(0)
-  const [orientation, setOrientation] = useState<'white' | 'black'>('white')
+  const [tab, setTab] = useState<'moves' | 'report'>('moves')
+  const [orientation, setOrientation] = useState<'white' | 'black'>(player === 'b' ? 'black' : 'white')
   const [preview, setPreview] = useState<Preview | null>(null)
   const move: MoveReview | undefined = review.moves[ply - 1]
 
@@ -117,8 +127,16 @@ export function ReviewView({ review, onBack }: { review: GameReview; onBack: () 
           <button className="link" onClick={onBack}>← New game</button>
           <span className="muted">{review.opening?.replace(/^[A-E]\d\d /, '') ?? ''}</span>
         </div>
+        <div className="tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'moves'} className={tab === 'moves' ? 'on' : ''} onClick={() => setTab('moves')}>Moves</button>
+          <button role="tab" aria-selected={tab === 'report'} className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')}>Coach report</button>
+        </div>
 
+        {tab === 'report' ? (
+          <GameReportPanel review={review} player={player} onGo={p => { setTab('moves'); go(p) }} onLesson={onLesson} onPractice={onPractice} />
+        ) : (<>
         <Coach
+          onLesson={onLesson}
           move={move}
           review={review}
           preview={preview}
@@ -159,6 +177,7 @@ export function ReviewView({ review, onBack }: { review: GameReview; onBack: () 
           )}
           <p className="muted small">Stockfish 18 (lite) · depth {review.depth}</p>
         </div>
+        </>)}
       </section>
     </div>
   )
@@ -167,7 +186,8 @@ export function ReviewView({ review, onBack }: { review: GameReview; onBack: () 
 const short = (name: string) => name.replace(/\s*\(.*\)$/, '')
 const moveNo = (m: MoveReview) => `${Math.ceil(m.ply / 2)}${m.color === 'w' ? '.' : '…'}`
 
-function Coach({ move, review, preview, onLine, onPreviewIndex, onExit }: {
+function Coach({ move, review, preview, onLine, onPreviewIndex, onExit, onLesson }: {
+  onLesson: (id: string) => void
   move?: MoveReview
   review: GameReview
   preview: Preview | null
@@ -195,7 +215,7 @@ function Coach({ move, review, preview, onLine, onPreviewIndex, onExit }: {
         <span style={{ color: info.color }}>{info.phrase}</span>
         <span className="score">{formatScore(move.scoreAfter)}</span>
       </div>
-      <p>{move.comment}</p>
+      <CoachNoteView review={review} move={move} onLesson={onLesson} />
       {preview ? (
         <div className="line">
           <span className="muted">Exploring line:</span>
@@ -247,6 +267,26 @@ function MoveList({ review, ply, onSelect }: { review: GameReview; ply: number; 
           {cell(b)}
         </div>
       ))}
+    </div>
+  )
+}
+
+function CoachNoteView({ review, move, onLesson }: { review: GameReview; move: MoveReview; onLesson: (id: string) => void }) {
+  const note = useMemo(() => coachMove(review, move.ply - 1), [review, move])
+  const body = [...note.tactical, ...note.strategic]
+  return (
+    <div className="coach-note">
+      <p><strong>{note.headline}</strong> {body.length ? body[0] : move.comment}</p>
+      {body.slice(1).map((t, i) => <p key={i}>{t}</p>)}
+      {note.advice && <p className="advice">💡 {note.advice}</p>}
+      {note.lessons.length > 0 && (
+        <div className="line">
+          <span className="muted">Learn:</span>
+          {note.lessons.slice(0, 3).map(l => (
+            <button key={l} className="chip" onClick={() => onLesson(l)}>{lessonById(l)?.title ?? l}</button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

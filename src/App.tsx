@@ -1,7 +1,33 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ReviewView } from './components/ReviewView'
+import { TrainView } from './components/TrainView'
+import { LessonsView } from './components/LessonsView'
+import { ProfileView } from './components/ProfileView'
 import { reviewGame, type GameReview } from './lib/review'
 import { fetchChessCom, fetchLichess, type GameSummary } from './lib/importers'
+import { loadProgress, setPlayer } from './lib/progress'
+import { playerSide } from './lib/training'
+
+type View = 'review' | 'train' | 'lessons' | 'profile'
+
+/** Hash routes: #/review, #/train, #/train/<lesson>, #/lessons, #/lessons/<lesson>, #/profile */
+function readRoute(): { view: View; arg?: string } {
+  const [, view = 'review', arg] = location.hash.replace(/^#/, '').split('/')
+  return { view: (['review', 'train', 'lessons', 'profile'].includes(view) ? view : 'review') as View, arg: arg || undefined }
+}
+const goTo = (view: View, arg?: string) => { location.hash = `/${view}${arg ? `/${arg}` : ''}` }
+
+function Nav({ view }: { view: View }) {
+  const items: [View, string][] = [['review', 'Review'], ['train', 'Train'], ['lessons', 'Lessons'], ['profile', 'Profile']]
+  return (
+    <nav className="topnav">
+      <a className="brand" href="#/review"><span className="logo">♞</span> Game Review</a>
+      <div className="navlinks">
+        {items.map(([v, label]) => <a key={v} href={`#/${v}`} className={view === v ? 'on' : ''}>{label}</a>)}
+      </div>
+    </nav>
+  )
+}
 
 type Source = 'chess.com' | 'lichess' | 'pgn'
 
@@ -27,6 +53,29 @@ const savedUser = (k: string) => {
 }
 
 export default function App() {
+  const [route, setRoute] = useState(readRoute)
+  useEffect(() => {
+    const on = () => setRoute(readRoute())
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  return (
+    <>
+      <Nav view={route.view} />
+      {route.view === 'train' ? (
+        <TrainView key={route.arg ?? 'daily'} lesson={route.arg} onLesson={id => goTo('lessons', id)} />
+      ) : route.view === 'lessons' ? (
+        <LessonsView selected={route.arg} onSelect={id => goTo('lessons', id)} onPractice={id => goTo('train', id)} />
+      ) : route.view === 'profile' ? (
+        <ProfileView onPractice={id => goTo('train', id)} onLesson={id => goTo('lessons', id)} />
+      ) : (
+        <ReviewPage />
+      )}
+    </>
+  )
+}
+
+function ReviewPage() {
   const [source, setSource] = useState<Source>(() => (savedUser('src') as Source) || 'chess.com')
   const [username, setUsername] = useState(() => savedUser('user'))
   const [pgn, setPgn] = useState('')
@@ -45,6 +94,7 @@ export default function App() {
       setGames(list)
       try {
         localStorage.setItem('user', username)
+        if (!loadProgress().player) setPlayer(username.trim(), source)
         localStorage.setItem('src', source)
       } catch { /* storage unavailable */ }
       if (!list.length) setError('No recent standard games found.')
@@ -68,7 +118,18 @@ export default function App() {
     }
   }
 
-  if (review) return <ReviewView review={review} onBack={() => setReview(null)} />
+  if (review) {
+    const name = loadProgress().player?.name ?? (source !== 'pgn' ? username : undefined)
+    return (
+      <ReviewView
+        review={review}
+        player={playerSide(review, name)}
+        onBack={() => setReview(null)}
+        onLesson={id => goTo('lessons', id)}
+        onPractice={id => goTo('train', id)}
+      />
+    )
+  }
 
   return (
     <main className="home">
