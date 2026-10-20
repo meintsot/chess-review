@@ -31,7 +31,7 @@ class EngineWorker {
     this.worker = new Worker(ENGINE_URL)
     this.worker.onmessage = e => this.listener?.(String(e.data))
     this.ready = this.waitFor('uciok', 'uci').then(() => {
-      this.send('setoption name Hash value 32')
+      this.send('setoption name Hash value 16')
       return this.waitFor('readyok', 'isready')
     }).then(() => undefined)
   }
@@ -81,7 +81,7 @@ class EngineWorker {
 export class EnginePool {
   private workers: EngineWorker[]
 
-  constructor(size = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1))) {
+  constructor(size = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 2) - 2))) {
     this.workers = Array.from({ length: size }, () => new EngineWorker())
   }
 

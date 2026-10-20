@@ -133,8 +133,8 @@ export function ReviewView({ review, onBack }: { review: GameReview; onBack: () 
 
         <div className="summary">
           <div className="acc-row">
-            <div className="acc w"><span className="acc-num">{review.accuracy.w.toFixed(1)}</span><span className="muted">Accuracy · {short(review.white)}</span></div>
-            <div className="acc b"><span className="acc-num">{review.accuracy.b.toFixed(1)}</span><span className="muted">Accuracy · {short(review.black)}</span></div>
+            <div className="acc w"><span className="acc-num">{review.accuracy.w.toFixed(1)}</span><span className="muted">Accuracy · {short(review.white)}</span><span className="grating">Game rating <b>{review.gameRating.w}</b></span></div>
+            <div className="acc b"><span className="acc-num">{review.accuracy.b.toFixed(1)}</span><span className="muted">Accuracy · {short(review.black)}</span><span className="grating">Game rating <b>{review.gameRating.b}</b></span></div>
           </div>
           <table className="counts">
             <tbody>

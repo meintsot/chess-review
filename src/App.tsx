@@ -6,9 +6,9 @@ import { fetchChessCom, fetchLichess, type GameSummary } from './lib/importers'
 type Source = 'chess.com' | 'lichess' | 'pgn'
 
 const DEPTHS = [
-  { label: 'Fast', depth: 12 },
-  { label: 'Standard', depth: 16 },
-  { label: 'Deep', depth: 20 },
+  { label: 'Fast', depth: 14 },
+  { label: 'Standard', depth: 18 },
+  { label: 'Deep', depth: 22 },
 ]
 
 const SAMPLE = `[Event "Opera Game"]
@@ -31,7 +31,7 @@ export default function App() {
   const [username, setUsername] = useState(() => savedUser('user'))
   const [pgn, setPgn] = useState('')
   const [games, setGames] = useState<GameSummary[] | null>(null)
-  const [depth, setDepth] = useState(16)
+  const [depth, setDepth] = useState(18)
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)

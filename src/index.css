@@ -146,3 +146,4 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   .evalbar { width: 16px; }
 }
 .review, .home { overflow-x: clip; }
+.grating { font-size: 12px; opacity: .85; }

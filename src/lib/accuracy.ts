@@ -1,39 +1,37 @@
-// Port of Lichess's AccuracyPercent: per-move accuracy from win% drop, and game accuracy as the
-// average of a volatility-weighted mean and a harmonic mean.
+import { scoreCp, type Score } from './score'
 
-export function moveAccuracy(winBefore: number, winAfter: number): number {
-  if (winAfter >= winBefore) return 100
-  const raw = 103.1668 * Math.exp(-0.04354 * (winBefore - winAfter)) - 3.1669 + 1 // +1 uncertainty bonus
+/** Per-move accuracy (0..100) from the drop in expected score %, using Lichess's fitted curve. */
+export function moveAccuracy(before: number, after: number): number {
+  if (after >= before) return 100
+  const raw = 103.1668 * Math.exp(-0.04354 * (before - after)) - 3.1669 + 1 // +1 uncertainty bonus
   return Math.max(0, Math.min(100, raw))
 }
 
-function stdDev(xs: number[]) {
-  const mean = xs.reduce((a, b) => a + b, 0) / xs.length
-  return Math.sqrt(xs.reduce((a, x) => a + (x - mean) ** 2, 0) / xs.length)
+/** chess.com-style game accuracy: a plain average of move accuracies ("school grade" scale, CAPS2-like). */
+export function meanAccuracy(moves: { color: 'w' | 'b'; accuracy: number }[], color: 'w' | 'b'): number {
+  const xs = moves.filter(m => m.color === color).map(m => m.accuracy)
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 100
 }
 
-/** whiteWins: White win% for the start position followed by every position after each ply. */
-export function gameAccuracy(whiteWins: number[], whiteMovesFirst: boolean): { w: number; b: number } {
-  const plies = whiteWins.length - 1
-  if (plies < 1) return { w: 100, b: 100 }
-  const windowSize = Math.max(2, Math.min(8, Math.floor(plies / 10)))
-  const windows: number[][] = []
-  for (let i = 0; i < Math.min(windowSize, whiteWins.length) - 2; i++) windows.push(whiteWins.slice(0, windowSize))
-  for (let i = 0; i + windowSize <= whiteWins.length; i++) windows.push(whiteWins.slice(i, i + windowSize))
-  const weights = windows.map(w => Math.max(0.5, Math.min(12, stdDev(w))))
-
-  const per: Record<'w' | 'b', { acc: number; weight: number }[]> = { w: [], b: [] }
-  for (let i = 0; i < plies; i++) {
-    const white = (i % 2 === 0) === whiteMovesFirst
-    const [prev, next] = [whiteWins[i], whiteWins[i + 1]]
-    const acc = white ? moveAccuracy(prev, next) : moveAccuracy(100 - prev, 100 - next)
-    per[white ? 'w' : 'b'].push({ acc, weight: weights[i] ?? 1 })
+/**
+ * Game-performance rating (Lichess scale) from average centipawn loss, the way chess.com shows a
+ * "Game Rating". ACPL→Elo curve from the Lichess community estimate; when the player's rating is known
+ * the estimate is anchored to it, so one sharp game doesn't swing it wildly.
+ */
+export function estimateRating(scores: Score[], color: 'w' | 'b', whiteFirst: boolean, knownRating?: number): number {
+  let total = 0
+  let n = 0
+  for (let i = 0; i < scores.length - 1; i++) {
+    const whiteToMove = (i % 2 === 0) === whiteFirst
+    if ((color === 'w') !== whiteToMove) continue
+    const before = scoreCp(scores[i])
+    const after = scoreCp(scores[i + 1])
+    total += Math.min(1000, Math.max(0, color === 'w' ? before - after : after - before))
+    n++
   }
-  const combine = (xs: { acc: number; weight: number }[]) => {
-    if (!xs.length) return 100
-    const weighted = xs.reduce((a, x) => a + x.acc * x.weight, 0) / xs.reduce((a, x) => a + x.weight, 0)
-    const harmonic = xs.length / xs.reduce((a, x) => a + 1 / Math.max(1, x.acc), 0)
-    return (weighted + harmonic) / 2
-  }
-  return { w: combine(per.w), b: combine(per.b) }
+  const acpl = n ? total / n : 0
+  const fromAcpl = 3100 * Math.exp(-0.01 * acpl)
+  if (!knownRating) return fromAcpl
+  const expectedAcpl = -100 * Math.log(Math.min(knownRating, 3100) / 3100)
+  return knownRating * Math.exp(-0.005 * (acpl - expectedAcpl))
 }

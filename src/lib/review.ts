@@ -1,7 +1,9 @@
 import { Chess, type Move, type PieceSymbol, type Square } from 'chess.js'
-import { EnginePool, type EngineResult } from './engine'
-import { gameAccuracy, moveAccuracy } from './accuracy'
-import { formatScore, toWhitePov, winPercent, type Score } from './score'
+import { EnginePool, type EngineResult, type RawScore } from './engine'
+import { estimateRating, meanAccuracy, moveAccuracy } from './accuracy'
+import { expectedPoints, fromLichessScale, toLichessScale, type RatingSource } from './expectedPoints'
+import { isSafe, other, sacrificedPieces, VALUE, type Piece } from './safety'
+import { formatScore, toWhitePov, type Score } from './score'
 
 export type Classification =
   | 'brilliant' | 'great' | 'best' | 'excellent' | 'good' | 'book' | 'forced'
@@ -22,8 +24,8 @@ export interface MoveReview {
   bestSan?: string
   bestLineSan: string[]
   replyLineSan: string[] // opponent's best continuation after the move
-  winBefore: number // mover POV
-  winAfter: number // mover POV
+  winBefore: number // mover's expected score %, rating-aware
+  winAfter: number
   loss: number // expected points lost, 0..1
   accuracy: number
   cls: Classification
@@ -42,10 +44,10 @@ export interface GameReview {
   moves: MoveReview[]
   startScore: Score
   accuracy: { w: number; b: number }
+  gameRating: { w: number; b: number }
   depth: number
 }
 
-const VALUE: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 }
 const NAME: Record<PieceSymbol, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' }
 
 let bookPromise: Promise<Record<string, string>> | null = null
@@ -73,8 +75,7 @@ function material(c: Chess, color: 'w' | 'b'): number {
   return sum
 }
 
-/** Material change (for `color`) after playing up to `plies` of a line, measured at its lowest point
- *  once the line settles (we only look at positions after the opponent has moved). */
+/** Material change (for `color`) after playing up to `plies` of a line. */
 function lineMaterialSwing(fen: string, uci: string[], color: 'w' | 'b', plies = 6) {
   const c = new Chess(fen)
   const start = material(c, color)
@@ -91,20 +92,6 @@ function lineMaterialSwing(fen: string, uci: string[], color: 'w' | 'b', plies =
     last = material(c, color) - start
   }
   return { swing: last, captured }
-}
-
-/** Biggest net material the side to move can grab right now (captures of non-pawns). */
-function hangingLoss(c: Chess): { loss: number; square?: Square; piece?: PieceSymbol } {
-  let best: { loss: number; square?: Square; piece?: PieceSymbol } = { loss: 0 }
-  for (const m of c.moves({ verbose: true })) {
-    if (!m.captured || m.captured === 'p') continue
-    c.move(m)
-    const canRecapture = c.moves({ verbose: true }).some(r => r.to === m.to)
-    c.undo()
-    const loss = VALUE[m.captured] - (canRecapture ? VALUE[m.piece] : 0)
-    if (loss > best.loss) best = { loss, square: m.to, piece: m.captured }
-  }
-  return best
 }
 
 const pct = (n: number) => Math.round(n)
@@ -129,6 +116,13 @@ export async function reviewGame(
   if (!history.length) throw new Error('This game has no moves.')
   const startFen = history[0].before
   const book = await loadBook()
+
+  const site = (headers.Site ?? '').toLowerCase()
+  const source: RatingSource = site.includes('chess.com') ? 'chess.com' : site.includes('lichess') ? 'lichess' : 'other'
+  const rating = {
+    w: toLichessScale(Number(headers.WhiteElo), source),
+    b: toLichessScale(Number(headers.BlackElo), source),
+  }
 
   // Engine: every position from the start through the final one.
   const fens = [startFen, ...history.map(m => m.after)]
@@ -156,58 +150,67 @@ export async function reviewGame(
     if (!top) return { draw: true } // e.g. repetition / 50-move draw reported without a line
     return toWhitePov(top.score, f.split(' ')[1] as 'w' | 'b')
   })
-  const whiteWins = scores.map(winPercent)
 
   const moves: MoveReview[] = []
   let inBook = true
   for (let i = 0; i < history.length; i++) {
     const m = history[i]
     const mover = m.color
-    const pov = (w: number) => (mover === 'w' ? w : 100 - w)
+    const R = rating[mover]
+    const ep = (s: Score) => expectedPoints(s, mover, R)
     const before = new Chess(m.before)
     const after = new Chess(m.after)
     const res = results[i]
     const bestUci = res?.lines[0]?.pv[0]
     const played = uciOf(m)
-    const isBest = played === bestUci
 
-    const winBefore = pov(whiteWins[i])
-    const winAfter = isBest ? winBefore : pov(whiteWins[i + 1])
-    const loss = Math.max(0, (winBefore - winAfter) / 100)
-    const second = res?.lines[1]
-    const winSecond = second ? pov(winPercent(toWhitePov(second.score, mover))) : undefined
+    // Judge the played move with the same search when it is one of the engine's lines (less depth noise).
+    const playedLine = res?.lines.find(l => l.pv[0] === played)
+    const scoreTop = scores[i]
+    const scorePlayed = after.isCheckmate() || !playedLine ? scores[i + 1] : toWhitePov(playedLine.score, mover)
+    const isBest = played === bestUci || (!!playedLine && sameScore(playedLine.score, res!.lines[0].score))
+    const second = res?.lines.find(l => l.pv[0] !== bestUci)
+    const scoreSecond = second ? toWhitePov(second.score, mover) : undefined
+
+    const epBefore = ep(scoreTop)
+    const epAfter = isBest ? epBefore : ep(scorePlayed)
+    const loss = Math.max(0, epBefore - epAfter)
 
     const opening = book[bookKey(m.after)]
     inBook = inBook && opening !== undefined
 
     let cls: Classification
-    if (inBook) cls = 'book'
-    else if (before.moves().length === 1) cls = 'forced'
-    else if (isBest) cls = 'best'
-    else if (loss < 0.02) cls = 'excellent'
-    else if (loss < 0.05) cls = 'good'
-    else if (loss < 0.1) cls = 'inaccuracy'
-    else if (loss < 0.2) cls = 'mistake'
-    else cls = 'blunder'
+    if (before.moves().length === 1) cls = 'forced'
+    else if (inBook) cls = 'book'
+    else if (after.isCheckmate() || isBest) cls = 'best'
+    else cls = pointLossClass(subjective(scoreTop, mover), subjective(scorePlayed, mover), loss, epBefore)
 
-    // Brilliant: a (near-)best move that leaves real material en prise, without spoiling the position.
-    const hang = hangingLoss(after)
-    const gained = m.captured ? VALUE[m.captured] : 0
-    const sacrifice = hang.loss - gained >= 2 && !after.isCheckmate()
-    if ((cls === 'best' || (cls === 'excellent' && loss <= 0.01)) && sacrifice && winAfter >= 50 && m.piece !== 'k') {
+    // Shared gate for Great and Brilliant (chess.com: not when completely winning anyway, not when
+    // losing afterwards; the open-source clones also skip check evasions and promotions).
+    const curSubj = subjective(scorePlayed, mover)
+    const secondSubj = scoreSecond && subjective(scoreSecond, mover)
+    const winningAnyway = secondSubj ? secondSubj.value >= 700 : curSubj.value >= 700
+    const candidate = !inBook && cls !== 'forced' && !after.isCheckmate() && !winningAnyway && curSubj.value >= 0 && !before.inCheck()
+
+    let sacrificed: Piece[] = []
+    const generous = R < 1500 // chess.com is more generous with Brilliant/Great for newer players
+    const nearBest = isBest || loss < (generous ? 0.02 : 0.01)
+    if (candidate && nearBest && !m.promotion) sacrificed = sacrificedPieces(before, after, m)
+    if (sacrificed.length) {
       cls = 'brilliant'
-    } else if (cls === 'best' && !after.isCheckmate() && winSecond !== undefined && (winBefore - winSecond) / 100 >= 0.15) {
-      // Great: the only move that keeps the result; ignore obvious recaptures.
+    } else if (candidate && isBest && m.promotion !== 'q' && !(curSubj.mate && curSubj.mate > 0) && scoreSecond) {
       const prev = history[i - 1]
-      const recapture = prev?.captured && m.captured && prev.to === m.to
-      if (!recapture) cls = 'great'
+      const recapture = !!(prev?.captured && m.captured && prev.to === m.to)
+      const freeCapture = !!m.captured && !isSafe(before, { square: capturedSquare(m), type: m.captured, color: other(mover) })
+      const onlyMove = epBefore - ep(scoreSecond) >= greatThreshold(R)
+      if (onlyMove && !recapture && !freeCapture) cls = 'great'
     }
 
     // Miss: the opponent just erred and this move let the chance slip (without losing more than that).
     const prevReview = moves[i - 1]
     if (prevReview && ['mistake', 'blunder', 'miss'].includes(prevReview.cls) && ['inaccuracy', 'mistake', 'blunder'].includes(cls)) {
-      const beforeTheirError = 100 - prevReview.winBefore
-      if (winBefore - beforeTheirError >= 10 && winAfter >= beforeTheirError - 5) cls = 'miss'
+      const beforeTheirError = ep(scores[i - 1])
+      if (epBefore - beforeTheirError >= 0.1 && epAfter <= beforeTheirError + 0.05 && epAfter >= beforeTheirError - 0.15) cls = 'miss'
     }
 
     const bestLineSan = res ? sanLine(m.before, res.lines[0]?.pv ?? []) : []
@@ -223,24 +226,26 @@ export async function reviewGame(
       to: m.to,
       fenBefore: m.before,
       fenAfter: m.after,
-      scoreBefore: scores[i],
+      scoreBefore: scoreTop,
       scoreAfter: scores[i + 1],
       bestUci,
       bestSan: bestLineSan[0],
       bestLineSan,
       replyLineSan,
-      winBefore,
-      winAfter,
+      winBefore: epBefore * 100,
+      winAfter: epAfter * 100,
       loss,
-      accuracy: moveAccuracy(winBefore, winAfter),
+      accuracy: moveAccuracy(epBefore * 100, epAfter * 100),
       cls,
       opening: opening || undefined,
       comment: '',
     }
-    review.comment = explain(review, { hang, res, replyPv, winSecond, secondSan: second ? sanLine(m.before, second.pv, 1)[0] : undefined, after })
+    review.comment = explain(review, { sacrificed, res, replyPv, secondSan: second ? sanLine(m.before, second.pv, 1)[0] : undefined, after })
     moves.push(review)
   }
 
+  const est = (c: 'w' | 'b', elo?: string) =>
+    Math.round(fromLichessScale(estimateRating(scores, c, startFen.split(' ')[1] === 'w', elo ? rating[c] : undefined), source) / 50) * 50
   const openingName = [...moves].reverse().find(m => m.opening)?.opening ?? headers.Opening
   return {
     white: headers.White ?? 'White',
@@ -252,16 +257,71 @@ export async function reviewGame(
     opening: openingName,
     moves,
     startScore: scores[0],
-    accuracy: gameAccuracy(whiteWins, startFen.split(' ')[1] === 'w'),
+    accuracy: { w: meanAccuracy(moves, 'w'), b: meanAccuracy(moves, 'b') },
+    gameRating: { w: est('w', headers.WhiteElo), b: est('b', headers.BlackElo) },
     depth,
   }
 }
 
+const sameScore = (a: RawScore, b: RawScore) =>
+  'mate' in a ? 'mate' in b && a.mate === b.mate : 'cp' in b && Math.abs(a.cp - b.cp) <= 2
+
+const capturedSquare = (m: Move): Square => (m.isEnPassant() ? ((m.to[0] + m.from[1]) as Square) : m.to)
+
+/** Score from the mover's point of view: `value` in cp (mates count as ±10000), `mate` > 0 = mover mates. */
+function subjective(s: Score, color: 'w' | 'b'): { value: number; mate?: number } {
+  const sign = color === 'w' ? 1 : -1
+  if ('mated' in s) return s.mated === color ? { value: -10000, mate: -0.5 } : { value: 10000, mate: 0.5 }
+  if ('draw' in s) return { value: 0 }
+  if ('mate' in s) return { value: Math.sign(s.mate * sign) * 10000, mate: s.mate * sign }
+  return { value: s.cp * sign }
+}
+
+/** chess.com's expected-points table, with mate transitions handled the way the open-source clones do. */
+function pointLossClass(
+  prev: { value: number; mate?: number },
+  cur: { value: number; mate?: number },
+  loss: number,
+  epBefore: number,
+): Classification {
+  if (prev.mate !== undefined && cur.mate !== undefined) {
+    if (prev.mate > 0 && cur.mate < 0) return cur.mate < -3 ? 'mistake' : 'blunder'
+    const mateLoss = cur.mate - prev.mate // > 0: the winner's mate got longer / the loser's got shorter
+    if (mateLoss < 0 || (mateLoss === 0 && cur.mate < 0)) return 'best'
+    if (mateLoss < 2) return 'excellent'
+    if (mateLoss < 7) return 'good'
+    return 'inaccuracy'
+  }
+  if (prev.mate !== undefined && prev.mate > 0) {
+    if (cur.value >= 800) return 'excellent'
+    if (cur.value >= 400) return 'good'
+    if (cur.value >= 200) return 'inaccuracy'
+    if (cur.value >= 0) return 'mistake'
+    return 'blunder'
+  }
+  if (prev.mate === undefined && cur.mate !== undefined && epBefore > 0.05) {
+    if (cur.mate > 0) return 'best'
+    if (cur.mate >= -2) return 'blunder'
+    if (cur.mate >= -5) return 'mistake'
+    return 'inaccuracy'
+  }
+  if (loss < 0.02) return 'excellent'
+  if (loss < 0.05) return 'good'
+  if (loss < 0.1) return 'inaccuracy'
+  if (loss < 0.2) return 'mistake'
+  return 'blunder'
+}
+
+/** How much worse the next-best move must be for "only move" (Great); lower for newer players. */
+function greatThreshold(lichessRating: number) {
+  const t = (lichessRating - 1200) / 600
+  return 0.08 + 0.02 * Math.max(0, Math.min(1, t))
+}
+
 interface ExplainCtx {
-  hang: ReturnType<typeof hangingLoss>
+  sacrificed: Piece[]
   res?: EngineResult
   replyPv: string[]
-  winSecond?: number
   secondSan?: string
   after: Chess
 }
@@ -281,8 +341,8 @@ function explain(r: MoveReview, ctx: ExplainCtx): string {
     case 'forced':
       return `${san} was the only legal move.`
     case 'brilliant': {
-      const piece = ctx.hang.piece ? NAME[ctx.hang.piece] : 'material'
-      return `A brilliant sacrifice! ${san} offers your ${piece}${ctx.hang.square ? ` on ${ctx.hang.square}` : ''}, but grabbing it doesn't work out for your opponent: ${line(r.replyLineSan)}.`
+      const p = ctx.sacrificed.reduce((a, b) => (VALUE[b.type] > VALUE[a.type] ? b : a))
+      return `A brilliant sacrifice! ${san} offers your ${NAME[p.type]} on ${p.square}, but grabbing it doesn't work out for your opponent: ${line(r.replyLineSan)}.`
     }
     case 'great':
       return `${san} is a great find — the only move that keeps your position${ctx.secondSan ? `. The next best try, ${ctx.secondSan}, is much worse` : ''}.`
@@ -318,6 +378,6 @@ function explain(r: MoveReview, ctx: ExplainCtx): string {
       else parts.push(`Better was ${bestSan} (${line(r.bestLineSan, 4)}).`)
     }
   }
-  const evalNote = `Eval ${formatScore(scoreBefore)} → ${formatScore(scoreAfter)}; your winning chances went from ${pct(r.winBefore)}% to ${pct(r.winAfter)}%.`
+  const evalNote = `Eval ${formatScore(scoreBefore)} → ${formatScore(scoreAfter)}; your expected score went from ${pct(r.winBefore)}% to ${pct(r.winAfter)}%.`
   return [...parts, evalNote].join(' ')
 }
