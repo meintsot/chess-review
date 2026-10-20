@@ -39,13 +39,13 @@ const TYPICAL: Record<Speed, [number, number]> = {
   daily: [68.01, 0.00798],
 }
 /**
- * chess.com-style "Game Rating" (chess.com scale), fitted on 84 scraped chess.com reviews (cross-validated
- * RMSE 173): the rating, pulled slightly toward 1800, moved ~28 points per accuracy point above or below
+ * chess.com-style "Game Rating" (chess.com scale), fitted on 218 players from scraped chess.com reviews using
+ * our own accuracy as input (RMSE 171, held-out 162–185): the rating, pulled slightly toward 2050, moved ~33 points per accuracy point above or below
  * what is typical at that rating and time control. Without a known rating, the rating at which this
  * accuracy would be typical.
  */
 export function estimateRating(accuracy: number, speed: Speed, rating?: number): number {
   const [a, b] = TYPICAL[speed]
   if (!rating) return Math.max(100, Math.min(3200, (accuracy - a) / b))
-  return Math.max(100, Math.min(3300, 0.88 * rating + 0.12 * 1800 + 27.8 * (accuracy - (a + b * rating))))
+  return Math.max(100, Math.min(3300, 0.914 * rating + 0.086 * 2052 + 32.9 * (accuracy - (a + b * rating))))
 }

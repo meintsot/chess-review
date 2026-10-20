@@ -229,11 +229,12 @@ export function buildReview(pgn: string, results: EngineResult[], book: Record<s
     // Judged on expected points rather than the label, so the opponent's error counts from ~0.08 lost and
     // missing a forced mate counts even when the move played still wins.
     // chess.com: a Miss is failing to take a *winning* chance the opponent offered.
-    // Fitted on scraped chess.com reviews: the opponent's last move lost > 0.08, this one loses > 0.09 (or
-    // throws away a forced mate) but the position doesn't collapse (> 25% expected score left).
+    // Fitted (cross-validated on two independent sets of scraped chess.com reviews): the opponent's last
+    // move lost > 0.08, this one loses > 0.08 (or throws away a forced mate) but the position doesn't
+    // collapse (> 15% expected score left).
     if (prevReview && prevReview.loss > 0.08 && !['best', 'brilliant', 'great', 'forced', 'book'].includes(cls)) {
       const missedMate = (subjective(scoreTop, mover).mate ?? 0) > 0 && !((curSubj.mate ?? 0) > 0)
-      if ((loss > 0.09 && epAfter > 0.25) || missedMate) cls = 'miss'
+      if ((loss > 0.08 && epAfter > 0.15) || missedMate) cls = 'miss'
     }
 
     const prevMove = history[i - 1]
