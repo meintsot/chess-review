@@ -46,7 +46,7 @@ describe('coach', () => {
       r.moves.forEach((m, i) => {
         const note = coachMove(r, i)
         for (const t of [...note.tactical, ...note.strategic]) {
-          expect(t).not.toMatch(/[\x00-\x08]/)
+          expect([...t].some(ch => ch.charCodeAt(0) < 9)).toBe(false)
           expect(t).not.toMatch(m.color === 'w' ? /\bWhite's\b/ : /\bBlack's\b/)
         }
       })
